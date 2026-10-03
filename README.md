@@ -31,7 +31,9 @@ pip install "grouptok[train]"   # train one (adds torch and transformers for the
 pip install "grouptok[hf]"      # GroupedTokenizer.to_hf() without the training dependencies
 ```
 
-## Quick start
+## Training a tokenizer
+
+Training needs the `train` extra. It runs on a GPU when one is available.
 
 ```python
 from grouptok import GroupedTokenizer, TokenizerConfig
@@ -39,8 +41,30 @@ from grouptok import GroupedTokenizer, TokenizerConfig
 pairs = [("The king said unto the people", "Le roi dit au peuple"), ...]   # (one language, the other)
 tok = GroupedTokenizer.train(pairs, TokenizerConfig(vocab_size=8192))
 tok.save_pretrained("my-tokenizer")      # tokenizer.json, tokenizer_config.json, groups.json
+```
+
+## Using a trained tokenizer
+
+Load a tokenizer saved in a local folder:
+
+```python
+from grouptok import GroupedTokenizer
 
 tok = GroupedTokenizer.from_pretrained("my-tokenizer")
+```
+
+or one published on the Hugging Face Hub (see [Publishing a tokenizer](#publishing-a-tokenizer)). 
+`from_pretrained` reads local folders only, so download the repository first; `huggingface_hub` comes with `tokenizers`:
+
+```python
+from huggingface_hub import snapshot_download
+
+tok = GroupedTokenizer.from_pretrained(snapshot_download("your-name/my-tokenizer"))
+```
+
+Then:
+
+```python
 ids = tok.encode("The king", bos=True, eos=True)
 tok.pairs(ids)                           # [(group, member), ...] for each token
 tok.decode(ids)                          # 'The king'
@@ -58,6 +82,32 @@ g.token_group, g.token_member            # per-token group and member ids (tuple
 g.num_groups, g.max_group_size           # sizes of the group and member tables
 g.token(group, member)                   # back to the token id
 ```
+
+## Publishing a trained tokenizer
+
+Save the trained tokenizer and upload the folder to a repository on the Hugging Face Hub with the
+[`hf` command](https://huggingface.co/docs/huggingface_hub/guides/cli). `hf upload` creates the repository if it doesn't
+exist yet.
+
+```bash
+hf auth login                                        # once, with a token that has write access
+hf upload your-name/my-tokenizer my-tokenizer        # repository id, then the folder save_pretrained wrote
+```
+
+If `hf` isn't found, update `huggingface_hub`: `pip install -U huggingface_hub`.
+
+Anyone can then download it and load it with grouptok:
+
+```python
+from huggingface_hub import snapshot_download
+from grouptok import GroupedTokenizer
+
+tok = GroupedTokenizer.from_pretrained(snapshot_download("your-name/my-tokenizer"))
+```
+
+The repository holds a standard `tokenizer.json` and `tokenizer_config.json`, so
+`transformers.AutoTokenizer.from_pretrained("your-name/my-tokenizer")` also works. 
+It loads the BPE tokenizer only and ignores `groups.json`.
 
 ## More than two languages
 
