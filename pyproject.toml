@@ -1,13 +1,16 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "grouptok"
-version = "0.0.1"
-description = "Translation-grouped tokenizer: subwords that translate each other share a group"
+dynamic = ["version"]
+description = "A translation-grouped tokenizer: subwords that translate each other share a group"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Henry Hale" }]
+
+[tool.hatch.version]
+source = "vcs"
