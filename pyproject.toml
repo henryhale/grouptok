@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "Henry Hale", url = "https://github.com/henryhale" }]
+authors = [{ name = "Henry Hale" }]
 keywords = ["tokenizer", "bpe", "multilingual", "cross-lingual", "word alignment", "nlp"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -25,6 +25,10 @@ classifiers = [
 ]
 # using a trained tokenizer needs only `tokenizers`; training one needs the `train` extra
 dependencies = ["tokenizers>=0.15"]
+
+[project.urls]
+Homepage = "https://github.com/henryhale/grouptok"
+Issues = "https://github.com/henryhale/grouptok/issues"
 
 [project.optional-dependencies]
 train = ["torch>=2.0", "transformers>=4.38"]   # subword alignment with a neural encoder
