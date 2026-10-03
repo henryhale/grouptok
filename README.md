@@ -11,7 +11,7 @@ A translation-grouped tokenizer: subwords that translate each other share a grou
 
 </div>
 
-grouptok trains a byte-level BPE tokenizer on sentence pairs. It then aligns the subwords of each pair with a neural
+**grouptok** trains a byte-level BPE tokenizer on sentence pairs. It then aligns the subwords of each pair with a neural
 word aligner and puts subwords that are often aligned into one **group**. Each token becomes a `(group, member)` pair:
 
 ```
@@ -61,9 +61,10 @@ g.token(group, member)                   # back to the token id
 
 ## More than two languages
 
-Pairs don't have to share a language pair: pool en–fr, en–de and fr–de pairs and train once. A token joins the group of
-whatever it is most often aligned with, so a group can hold `" house"`, `" maison"` and `" Haus"`. The group size cap
-(`max_group_size`, default 8) bounds how many members a group can get.
+Pairs don't have to share a language pair: pool `en–fr`, `en–de` and `fr–de` pairs and train once. 
+A token joins the group of whatever it is most often aligned with, so a group can hold `" house"`, `" maison"` and `" Haus"`. 
+
+The group size cap(`max_group_size`, default 8) bounds how many members a group can get.
 
 ```python
 from grouptok import GroupedTokenizer, GroupingConfig, TokenizerConfig
@@ -88,7 +89,9 @@ TokenizerConfig(
 )
 ```
 
-Any Hugging Face encoder with a fast tokenizer can be the aligner (mBERT, XLM-R, awesome-align, ...). You can also pass
+Any Hugging Face encoder with a fast tokenizer can be the aligner ([mBERT](https://huggingface.co/google-bert/bert-base-multilingual-cased),
+[XLM-R](https://huggingface.co/FacebookAI/xlm-roberta-base),
+[awesome-align](https://huggingface.co/aneuraz/awesome-align-with-co), ...). You can also pass
 your own object to `GroupedTokenizer.train(..., aligner=...)`. It needs an `encode(texts)` method that returns the
 vectors `[batch, length, dim]` and the character spans `[batch, length, 2]` of its word pieces, with empty spans for
 special and padding positions.
@@ -118,7 +121,7 @@ option.
    - if one is, the other joins its group unless the group already has `max_group_size` members;
    - two existing groups are never merged.
 
-   Every remaining token, including the reserved tokens, is a group of its own.
+   *Every remaining token, including the reserved tokens, is a group of its own.*
 
 ## Files
 
@@ -133,7 +136,8 @@ option.
 ```
 
 `groups` is only there for people reading the file. It lists the groups with several members as raw BPE tokens, where
-`Ġ` marks a leading space. `Grouping.load` reads `token_group` and `token_member`, and ignores any other keys.
+`Ġ` marks a leading space. 
+`Grouping.load` reads `token_group` and `token_member`, and ignores any other keys.
 
 ## Development
 
