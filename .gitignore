@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Editors, OS and local tool settings
+.idea/
+.vscode/
+.DS_Store
+.claude/settings.local.json
+
+# Tokenizers trained locally (the README examples write my-tokenizer/)
+/my-tokenizer/

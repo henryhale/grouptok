@@ -14,6 +14,11 @@ authors = [{ name = "Henry Hale", url = "https://github.com/henryhale" }]
 keywords = ["tokenizer", "bpe", "multilingual", "cross-lingual", "word alignment", "nlp"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Text Processing :: Linguistic",
