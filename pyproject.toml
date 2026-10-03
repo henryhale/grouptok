@@ -7,10 +7,34 @@ name = "grouptok"
 dynamic = ["version"]
 description = "A translation-grouped tokenizer: subwords that translate each other share a group"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "Henry Hale" }]
+authors = [{ name = "Henry Hale", url = "https://github.com/henryhale" }]
+keywords = ["tokenizer", "bpe", "multilingual", "cross-lingual", "word alignment", "nlp"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+]
+# using a trained tokenizer needs only `tokenizers`; training one needs the `train` extra
+dependencies = ["tokenizers>=0.15"]
+
+[project.optional-dependencies]
+train = ["torch>=2.0", "transformers>=4.38"]   # subword alignment with a neural encoder
+hf = ["transformers>=4.38"]                    # GroupedTokenizer.to_hf()
+test = ["pytest>=7"]
+
+[project.scripts]
+grouptok = "grouptok.cli:main"
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.build.targets.sdist]
+# the test data sample is committed for the tests but not published
+exclude = ["/tests/data", "/dist", "/venv", "/.github"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
