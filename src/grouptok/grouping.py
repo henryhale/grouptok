@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
@@ -45,7 +45,7 @@ class Grouping:
         object.__setattr__(self, 'token_member', tuple(self.token_member))
         if len(self.token_group) != len(self.token_member):
             raise ValueError('token_group and token_member must have the same length')
-        if self.token_group and (min(self.token_group) < 0 or set(self.token_group) != set(range(max(self.token_group) + 1))):
+        if set(self.token_group) != set(range(self.num_groups)):
             raise ValueError('group ids must be 0, 1, ..., number of groups - 1')
         if any(not 0 <= m < self.max_group_size for m in self.token_member):
             raise ValueError(f'member ids must be between 0 and max_group_size - 1 = {self.max_group_size - 1}')
@@ -71,30 +71,23 @@ class Grouping:
         return cls(tuple(token_group), tuple(token_member), max_group_size or max(map(len, groups), default=1))
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> Grouping:
-        """From the content of groups.json; other keys are ignored"""
+    def load(cls, path: PathLike) -> Grouping:
+        """Read groups.json (a file, or a directory containing it); other keys are ignored"""
+        path = os.path.join(path, 'groups.json') if os.path.isdir(path) else path
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
         return cls(tuple(data['token_group']), tuple(data['token_member']), int(data['max_group_size']))
 
-    def to_dict(self, tokens: Sequence[str] | None = None) -> dict[str, Any]:
-        """The content of groups.json; with the vocabulary's token strings, also a readable map of the groups with several members"""
+    def save(self, path: PathLike, tokens: Sequence[str] | None = None) -> None:
+        """Write groups.json (a file, or a directory to write it into); with the vocabulary's token strings, also a
+        readable map of the groups with several members"""
+        path = os.path.join(path, 'groups.json') if os.path.isdir(path) else path
         data: dict[str, Any] = {'max_group_size': self.max_group_size, 'token_group': list(self.token_group),
                                 'token_member': list(self.token_member)}
         if tokens is not None:
             data['groups'] = {g: [tokens[t] for t in members] for g, members in enumerate(self.groups()) if len(members) > 1}
-        return data
-
-    @classmethod
-    def load(cls, path: PathLike) -> Grouping:
-        """Read groups.json (a file, or a directory containing it)"""
-        path = os.path.join(path, 'groups.json') if os.path.isdir(path) else path
-        with open(path, encoding='utf-8') as f:
-            return cls.from_dict(json.load(f))
-
-    def save(self, path: PathLike, tokens: Sequence[str] | None = None) -> None:
-        """Write groups.json (a file, or a directory to write it into)"""
-        path = os.path.join(path, 'groups.json') if os.path.isdir(path) else path
         with open(path, 'w', encoding='utf-8') as f:
-            json.dump(self.to_dict(tokens), f, ensure_ascii=False)
+            json.dump(data, f, ensure_ascii=False)
 
     # ---- queries
     @property

@@ -6,6 +6,7 @@ the softmax of their similarity exceeds a threshold in both directions (awesome-
 transformers are needed here (pip install grouptok[train]); they are imported only when alignment runs."""
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -97,29 +98,22 @@ def align_pairs(pairs: Sequence[tuple[str, str]], bpe: tokenizers.Tokenizer, con
     import torch
     aligner = aligner or HFAligner(config)
     vocab_size = bpe.get_vocab_size()
-    keys = counts = occurrences = None  # distinct link keys (first * vocab_size + second) and their counts, sorted by key
+    links: Counter[tuple[int, int]] = Counter()
+    occurrences = torch.zeros(vocab_size, dtype=torch.long)
     with torch.no_grad():
         for start in range(0, len(pairs), config.batch_size):
             first, second = (list(side) for side in zip(*pairs[start:start + config.batch_size]))
             first_ids, first_cov, first_vec = subword_vectors(first, bpe, aligner)
             second_ids, second_cov, second_vec = subword_vectors(second, bpe, aligner)
             seen = torch.bincount(first_ids[first_cov], minlength=vocab_size) + torch.bincount(second_ids[second_cov], minlength=vocab_size)
-            occurrences = seen if occurrences is None else occurrences + seen
+            occurrences += seen.cpu()
             # uncovered positions are -inf, so each sentence's softmax only spans its own subwords (all-masked rows -> 0)
             sim = (first_vec @ second_vec.transpose(1, 2)).masked_fill(~(first_cov[:, :, None] & second_cov[:, None, :]), float('-inf'))
             linked = (sim.softmax(-1).nan_to_num() > config.threshold) & (sim.softmax(1).nan_to_num() > config.threshold)
             b, i, j = linked.nonzero(as_tuple=True)
             a_tok, b_tok = first_ids[b, i], second_ids[b, j]
             keep = a_tok != b_tok  # identical subwords on both sides are already one token
-            batch_keys = a_tok[keep].long() * vocab_size + b_tok[keep].long()
-            batch_counts = torch.ones_like(batch_keys)
-            if keys is not None:
-                batch_keys, batch_counts = torch.cat([keys, batch_keys]), torch.cat([counts, batch_counts])
-            keys, inverse = torch.unique(batch_keys, return_inverse=True)
-            counts = torch.zeros_like(keys).index_add_(0, inverse, batch_counts)
+            links.update(zip(a_tok[keep].tolist(), b_tok[keep].tolist()))
             if progress and start // config.batch_size % 100 == 0:
-                print(f'aligned {start + len(first)}/{len(pairs)} pairs, {len(keys)} distinct links')
-    if keys is None:
-        return LinkCounts(vocab_size, {}, (0,) * vocab_size)
-    links = {(k // vocab_size, k % vocab_size): c for k, c in zip(keys.tolist(), counts.tolist())}
-    return LinkCounts(vocab_size, links, tuple(occurrences.tolist()))
+                print(f'aligned {start + len(first)}/{len(pairs)} pairs, {len(links)} distinct links')
+    return LinkCounts(vocab_size, dict(links), tuple(occurrences.tolist()))
