@@ -43,7 +43,7 @@ source = "vcs"
 
 [tool.hatch.build.targets.sdist]
 # the test data sample is committed for the tests but not published
-exclude = ["/tests/data", "/dist", "/venv", "/.github"]
+exclude = ["/tests/data", "/.github"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
