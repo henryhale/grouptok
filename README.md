@@ -52,7 +52,7 @@ from grouptok import GroupedTokenizer
 tok = GroupedTokenizer.from_pretrained("my-tokenizer")
 ```
 
-or one published on the Hugging Face Hub (see [Publishing a tokenizer](#publishing-a-tokenizer)). 
+or one published on the Hugging Face Hub (see [Publishing a trained tokenizer](#publishing-a-trained-tokenizer)). 
 `from_pretrained` reads local folders only, so download the repository first; `huggingface_hub` comes with `tokenizers`:
 
 ```python
