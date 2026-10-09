@@ -3,7 +3,9 @@ import json
 
 import pytest
 
-from grouptok import Grouping, GroupingConfig, LinkCounts, build_groups
+from grouptok import Grouping, GroupingConfig
+from grouptok.align import LinkCounts
+from grouptok.grouping import build_groups
 
 
 def test_flat_grouping():
