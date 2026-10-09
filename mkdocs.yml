@@ -1,0 +1,52 @@
+site_name: grouptok
+site_description: "A translation-grouped tokenizer: subwords that translate each other share a group"
+site_url: https://henryhale.github.io/grouptok/
+repo_url: https://github.com/henryhale/grouptok
+
+theme:
+  name: material
+  palette:   # follows the system's light/dark preference, with a switch in the header
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/henryhale/grouptok
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/grouptok/
+
+nav:
+  - Home: index.md
+  - API reference: api.md
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.snippets:   # docs/index.md includes the README, so it is written once
+      check_paths: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_root_heading: true
+            show_source: false
+            merge_init_into_class: true
+            members_order: source
+            show_signature_annotations: true
