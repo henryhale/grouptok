@@ -30,6 +30,7 @@ parameters. The tokenizer itself is an ordinary BPE tokenizer (it saves a standa
 ```bash
 pip install grouptok            # load and use a trained tokenizer (needs only `tokenizers`)
 pip install "grouptok[train]"   # train one (adds torch and transformers for the aligner)
+pip install "grouptok[train,datasets]"   # and train on Hugging Face datasets directly (see Sources)
 ```
 
 ## Training a tokenizer
@@ -123,6 +124,35 @@ pairs = en_fr_pairs + en_de_pairs + fr_de_pairs
 tok = GroupedTokenizer.train(pairs, TokenizerConfig(vocab_size=32000, grouping=GroupingConfig(max_group_size=8)))
 ```
 
+## Sources
+
+Instead of loading the pairs yourself, describe each dataset as a `Source`, with its columns, row count and, if it
+needs one, its own aligner, and pass them all to `train`:
+
+```python
+from grouptok import AlignerConfig, GroupedTokenizer, Source, TokenizerConfig
+
+sources = [
+    Source("Helsinki-NLP/opus-100", subset="en-fr", columns=("translation.en", "translation.fr"), rows=200_000),
+    Source("michsethowusu/english-swahili_sentence-pairs", columns=("English", "Swahili"), rows=200_000),
+    Source("Helsinki-NLP/opus-100", subset="en-ha", columns=("translation.en", "translation.ha"),
+           aligner=AlignerConfig(model="Davlan/afro-xlmr-large")),
+    Source("pairs/en-am.jsonl", columns=("en", "am")),
+]
+tok = GroupedTokenizer.train(sources, TokenizerConfig(vocab_size=49152, aligner=AlignerConfig(model="FacebookAI/xlm-roberta-base")))
+```
+
+- `path` is a local `.jsonl` file, or a Hugging Face dataset id (streamed; needs the `datasets` extra).
+- `columns` are the two sides of the pairs, in order, and the first one supplies member 0 of the groups it creates (put
+  the language every pair shares first). A dot reads a nested field. Every source names them.
+- `rows` caps the rows read; rows with an empty column are skipped and don't count.
+- `aligner` overrides the training aligner for this source. Pairs are aligned in one pass per aligner, and the link
+  counts of all passes are pooled before grouping. Different encoders link at different rates, so a language aligned
+  by a denser one wins more group slots: prefer one encoder that covers every language, and override only the
+  languages it doesn't cover.
+
+Sources are read into memory before training, like pairs.
+
 ## Configuration
 
 ```python
@@ -149,21 +179,37 @@ special and padding positions.
 ## Command line
 
 ```bash
-grouptok train --pairs europarl.jsonl:en,fr opus.tsv --limit 200000 --out my-tokenizer --vocab-size 8192
+grouptok train --pairs europarl.jsonl opus.jsonl:src,tgt --columns en,fr --limit 200000 --out my-tokenizer --vocab-size 8192
 grouptok inspect my-tokenizer --word " king" " house"
 grouptok encode my-tokenizer "The king said"
 ```
 
-`--pairs` takes JSONL files (the two sides are the `--columns`, or the first two text fields) or TSV files (one pair per
-line, split at the first tab). Write `FILE:A,B` to choose the fields of one file. `grouptok train --help` lists every
-option.
+`--pairs` takes JSONL files whose two sides are the `--columns`; write `FILE:A,B` to choose the fields of one file.
+`grouptok train --help` lists every option.
+
+Instead of `--pairs`, `--config` takes a JSON list of [sources](#sources). A source's `aligner` overrides only the
+fields it sets; the rest, and the whole aligner of sources without one, come from the aligner options (`--aligner`,
+`--layer`, `--device`, ...):
+
+```bash
+grouptok train --config sources.json --out my-tokenizer --vocab-size 49152 --aligner FacebookAI/xlm-roberta-base
+```
+
+```json
+[
+  {"path": "Helsinki-NLP/opus-100", "subset": "en-fr", "columns": ["translation.en", "translation.fr"], "rows": 200000},
+  {"path": "Helsinki-NLP/opus-100", "subset": "en-ha", "columns": ["translation.en", "translation.ha"],
+   "aligner": {"model": "Davlan/afro-xlmr-large"}},
+  {"path": "pairs/en-am.jsonl", "columns": ["en", "am"]}
+]
+```
 
 ## How it works
 
 1. **BPE.** A byte-level BPE is trained on both sides of every pair. Reserved tokens come first.
-2. **Alignment.** Each pair goes through the aligner. A BPE subword gets the mean vector of the aligner's word pieces
-   that overlap it in characters. Two subwords are linked when each one's softmax over the other side's similarities
-   exceeds `threshold` (awesome-align's rule).
+2. **Alignment.** Each pair goes through the aligner (its source's own, if it has one). A BPE subword gets the mean
+   vector of the aligner's word pieces that overlap it in characters. Two subwords are linked when each one's softmax
+   over the other side's similarities exceeds `threshold` (awesome-align's rule).
 3. **Scores.** The Dice score of two subwords is `2 * links / (occurrences(a) + occurrences(b))`. Identical subwords on
    the two sides (names, numbers) are not linked.
 4. **Grouping.** Links are visited by descending Dice, skipping pairs below `min_link_count` or `min_dice`:

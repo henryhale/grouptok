@@ -1,21 +1,41 @@
-"""Reading pair files and the inspect / encode commands."""
-from conftest import SAMPLE
-from grouptok.cli import main, read_pairs
+"""The train command's --pairs specs and JSON config, and the inspect / encode commands."""
+import json
+
+import pytest
+
+from conftest import SAMPLE, FakeAligner
+from grouptok import AlignerConfig, GroupedTokenizer, Source
+from grouptok.cli import main, pairs_source
 
 
-def test_read_jsonl_pairs():
-    pairs = read_pairs(str(SAMPLE))   # the first two text fields: en, fr
-    assert len(pairs) == 500
-    assert pairs[1] == ('Then Phinehas stood up, and executed judgment, so the plague was stopped.',
-                        'Phinées se leva pour intervenir, Et la plaie s`arrêta;')
-    assert read_pairs(f'{SAMPLE}:fr,en', limit=2)[1] == pairs[1][::-1]
-    assert len(read_pairs(str(SAMPLE), columns=['en', 'fr'], limit=10)) == 10
+def test_pairs_spec():
+    assert pairs_source(f'{SAMPLE}:fr,en', limit=2) == Source(SAMPLE, columns=('fr', 'en'), rows=2)
+    assert pairs_source(str(SAMPLE), ['en', 'fr'], 10) == Source(SAMPLE, columns=('en', 'fr'), rows=10)
 
 
-def test_read_tsv_pairs(tmp_path):
-    path = tmp_path / 'pairs.tsv'
-    path.write_text('hello\tbonjour\n\nworld\tmonde\nonly one side\t\n', encoding='utf-8')
-    assert read_pairs(str(path)) == [('hello', 'bonjour'), ('world', 'monde')]
+def test_config_excludes_the_pairs_options(tmp_path):
+    with pytest.raises(SystemExit):
+        main(['train', '--config', 'sources.json', '--limit', '10', '--out', str(tmp_path / 'tok')])
+
+
+def test_train_from_a_config(tmp_path, monkeypatch):
+    """A source's aligner overrides only the aligner options it sets; sources without one use them as they are"""
+    pytest.importorskip('torch')
+    import grouptok.align
+    loaded = []
+
+    def fake_hf_aligner(config):
+        loaded.append(config)
+        return FakeAligner()
+
+    monkeypatch.setattr(grouptok.align, 'HFAligner', fake_hf_aligner)
+    config = tmp_path / 'sources.json'
+    config.write_text(json.dumps([{'path': str(SAMPLE), 'columns': ['en', 'fr'], 'rows': 256, 'aligner': {'model': 'own', 'max_length': 64}},
+                                  {'path': str(SAMPLE), 'columns': ['fr', 'en'], 'rows': 100}]), encoding='utf-8')
+    main(['train', '--config', str(config), '--out', str(tmp_path / 'tok'), '--vocab-size', '1000', '--aligner', 'default',
+          '--device', 'cpu', '--quiet'])
+    assert loaded == [AlignerConfig(model='own', max_length=64, device='cpu'), AlignerConfig(model='default', device='cpu')]
+    assert GroupedTokenizer.from_pretrained(tmp_path / 'tok').vocab_size <= 1000
 
 
 def test_inspect_and_encode(trained, tmp_path, capsys):

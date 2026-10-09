@@ -53,11 +53,16 @@ def pairs():
     return [(row['en'], row['fr']) for row in rows]
 
 
+def train_config():
+    """The training settings of the `trained` fixture"""
+    from grouptok import AlignerConfig, TokenizerConfig
+    return TokenizerConfig(vocab_size=1500, additional_tokens=('<think>', '</think>'), chat_template='{{ messages }}',
+                           aligner=AlignerConfig(device='cpu'))
+
+
 @pytest.fixture(scope='session')
 def trained(pairs):
     """A tokenizer trained on the sample with the fake aligner"""
     pytest.importorskip('torch')
-    from grouptok import AlignerConfig, GroupedTokenizer, TokenizerConfig
-    config = TokenizerConfig(vocab_size=1500, additional_tokens=('<think>', '</think>'), chat_template='{{ messages }}',
-                             aligner=AlignerConfig(device='cpu'))
-    return GroupedTokenizer.train(pairs, config, aligner=FakeAligner(), progress=False)
+    from grouptok import GroupedTokenizer
+    return GroupedTokenizer.train(pairs, train_config(), aligner=FakeAligner(), progress=False)
