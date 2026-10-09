@@ -28,7 +28,6 @@ parameters. The tokenizer itself is an ordinary BPE tokenizer (it saves a standa
 ```bash
 pip install grouptok            # load and use a trained tokenizer (needs only `tokenizers`)
 pip install "grouptok[train]"   # train one (adds torch and transformers for the aligner)
-pip install "grouptok[hf]"      # GroupedTokenizer.to_hf() without the training dependencies
 ```
 
 ## Training a tokenizer
@@ -70,7 +69,6 @@ tok.pairs(ids)                           # [(group, member), ...] for each token
 tok.decode(ids)                          # 'The king'
 tok.group_of(" king")                    # [' king', ' roi']
 tok.readable_groups()[:5]                # groups with at least two members, as token strings
-hf = tok.to_hf()                         # a transformers PreTrainedTokenizerFast
 ```
 
 The grouping is a `Grouping`, a one-to-one map between token ids and `(group, member)` pairs, which a model needs for

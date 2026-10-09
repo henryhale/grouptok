@@ -72,12 +72,10 @@ def test_transformers_tokenizer(trained, tmp_path):
     pytest.importorskip('transformers')
     from transformers import AutoTokenizer
     text = 'And the king said unto the people <think>'
-    hf = trained.to_hf()
-    assert hf(text, add_special_tokens=False).input_ids == trained.encode(text)
-    assert hf.pad_token_id == trained.pad_id and hf.eos_token_id == trained.eos_id
     trained.save_pretrained(tmp_path)
     auto = AutoTokenizer.from_pretrained(tmp_path)
     assert auto(text, add_special_tokens=False).input_ids == trained.encode(text)
+    assert auto.pad_token_id == trained.pad_id and auto.eos_token_id == trained.eos_id
     assert auto.decode(trained.encode(text), skip_special_tokens=True) == text   # '<think>' is not a special token
 
 

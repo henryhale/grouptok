@@ -32,7 +32,6 @@ Issues = "https://github.com/henryhale/grouptok/issues"
 
 [project.optional-dependencies]
 train = ["torch>=2.0", "transformers>=4.38"]   # subword alignment with a neural encoder
-hf = ["transformers>=4.38"]                    # GroupedTokenizer.to_hf()
 test = ["pytest>=7"]
 
 [project.scripts]

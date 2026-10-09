@@ -5,15 +5,12 @@ import json
 import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
 from .align import Aligner, AlignerConfig, align_pairs
 from .grouping import Grouping, GroupingConfig, build_groups
-
-if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizerFast
 
 PathLike = str | os.PathLike
 Pair = tuple[str, str]
@@ -149,17 +146,6 @@ class GroupedTokenizer:
         if self.chat_template is None:
             del config['chat_template']
         return config
-
-    def to_hf(self) -> PreTrainedTokenizerFast:
-        """The same tokenizer as a transformers PreTrainedTokenizerFast (chat template, padding, ...); needs transformers"""
-        from transformers import PreTrainedTokenizerFast
-        pad, bos, eos = self.special_tokens
-        tok = PreTrainedTokenizerFast(tokenizer_object=Tokenizer.from_str(json.dumps(self._tokenizer_data())), bos_token=bos,
-                                      eos_token=eos, pad_token=pad, unk_token=pad, additional_special_tokens=[bos, eos],
-                                      model_max_length=self.model_max_length, clean_up_tokenization_spaces=False)
-        if self.chat_template is not None:
-            tok.chat_template = self.chat_template
-        return tok
 
     # ---- vocabulary
     @property
