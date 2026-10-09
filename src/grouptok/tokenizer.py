@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import json
+import operator
 import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from functools import reduce
 from typing import Any
 
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
 from .align import Aligner, AlignerConfig, align_pairs
 from .grouping import Grouping, GroupingConfig, build_groups
+from .source import Source
 
 PathLike = str | os.PathLike
 Pair = tuple[str, str]
@@ -143,26 +146,30 @@ class GroupedTokenizer:
 
     # ---- training
     @classmethod
-    def train(cls, pairs: Iterable[Pair], config: TokenizerConfig = TokenizerConfig(), *, aligner: Aligner | None = None,
-              progress: bool = True) -> GroupedTokenizer:
+    def train(cls, pairs: Iterable[Pair | Source], config: TokenizerConfig = TokenizerConfig(), *,
+              aligner: Aligner | None = None, progress: bool = True) -> GroupedTokenizer:
         """Train a grouped tokenizer on sentence pairs.
 
         Trains a BPE on both sides of the pairs, aligns the subwords of each pair, then groups subwords that are often
         aligned. For more than two languages, pass the pairs of every language pair together: links are pooled, and a
         group can gather words of all of them. Training needs `pip install "grouptok[train]"`.
 
+        Sources are read first. Pairs are aligned in one pass per aligner, and the link counts of all passes are pooled
+        before grouping.
+
         Args:
-            pairs: `(text, translation)` pairs. Pairs with an empty side are skipped. The first side of each pair
-                supplies member 0 of the groups it creates.
+            pairs: `(text, translation)` pairs and/or `Source`s to read them from. Pairs with an empty side are skipped.
+                The first side of each pair supplies member 0 of the groups it creates.
             config: Vocabulary size, reserved tokens, grouping and aligner settings.
-            aligner: A custom aligner; defaults to `HFAligner(config.aligner)`.
+            aligner: A custom aligner for the pairs and the sources without their own; defaults to
+                `HFAligner(config.aligner)`.
             progress: Print progress while training.
 
         Returns:
             The trained tokenizer.
 
         Raises:
-            ValueError: If no pair has text on both sides.
+            ValueError: If no pair has text on both sides, or a source has no rows.
 
         Examples:
             >>> from grouptok import GroupedTokenizer, TokenizerConfig
@@ -173,13 +180,29 @@ class GroupedTokenizer:
             For more than two languages, pool the pairs of every language pair:
 
             >>> tok = GroupedTokenizer.train(en_fr_pairs + en_de_pairs + fr_de_pairs)
+
+            Or describe each dataset as a `Source`:
+
+            >>> from grouptok import Source
+            >>> tok = GroupedTokenizer.train([Source("en-fr.jsonl", columns=("en", "fr"), rows=100_000),
+            ...                               Source("en-de.jsonl", columns=("en", "de"))])
         """
-        pairs = [(a, b) for a, b in pairs if a and b]
-        if not pairs:
+        items = list(pairs)
+        plain = [(a, b) for a, b in (p for p in items if not isinstance(p, Source)) if a and b]
+        by_aligner: dict[AlignerConfig | None, list[Pair]] = {None: plain} if plain else {}   # None: the default aligner
+        for source in (p for p in items if isinstance(p, Source)):
+            rows = source.load()
+            if progress:
+                print(f'{len(rows)} pairs from {source.path}' + (f' ({source.subset})' if source.subset else ''))
+            by_aligner.setdefault(source.aligner, []).extend(rows)
+        if not by_aligner:
             raise ValueError('no sentence pairs with text on both sides')
         reserved = config.special_tokens + config.additional_tokens
-        bpe = train_bpe((text for pair in pairs for text in pair), config.vocab_size, reserved, progress=progress)
-        links = align_pairs(pairs, bpe, config.aligner, aligner=aligner, progress=progress)
+        bpe = train_bpe((text for rows in by_aligner.values() for pair in rows for text in pair), config.vocab_size, reserved,
+                        progress=progress)
+        passes = (align_pairs(rows, bpe, source_aligner or config.aligner, aligner=None if source_aligner else aligner,
+                              progress=progress) for source_aligner, rows in by_aligner.items())   # one encoder loaded at a time
+        links = reduce(operator.add, passes)
         grouping = build_groups(links, config.grouping, reserved=[bpe.token_to_id(t) for t in reserved])
         tok = cls(bpe, grouping, special_tokens=config.special_tokens, additional_tokens=config.additional_tokens,
                   chat_template=config.chat_template, model_max_length=config.model_max_length)

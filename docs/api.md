@@ -4,6 +4,8 @@
 
 ::: grouptok.TokenizerConfig
 
+::: grouptok.Source
+
 ::: grouptok.Grouping
 
 ::: grouptok.GroupingConfig

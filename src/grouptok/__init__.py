@@ -4,6 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .align import Aligner, AlignerConfig, HFAligner
 from .grouping import Grouping, GroupingConfig
+from .source import Source
 from .tokenizer import GroupedTokenizer, TokenizerConfig
 
 try:
@@ -11,4 +12,4 @@ try:
 except PackageNotFoundError:  # running from a source checkout
     __version__ = '0.0.0+unknown'
 
-__all__ = ['GroupedTokenizer', 'TokenizerConfig', 'Grouping', 'GroupingConfig', 'Aligner', 'AlignerConfig', 'HFAligner', '__version__']
+__all__ = ['GroupedTokenizer', 'TokenizerConfig', 'Source', 'Grouping', 'GroupingConfig', 'Aligner', 'AlignerConfig', 'HFAligner', '__version__']
