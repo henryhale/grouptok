@@ -21,18 +21,8 @@ jobs:
       with:
         persist-credentials: false
         fetch-depth: 0 # hatch-vcs reads the version from the git tag
-    - name: Set up Python
-      uses: actions/setup-python@v7
-      with:
-        python-version: "3.x"
-    - name: Install pypa/build
-      run: >-
-        python3 -m
-        pip install
-        build
-        --user
     - name: Build a binary wheel and a source tarball
-      run: python3 -m build
+      run: pipx run build  # pipx ships with the ubuntu runners
     - name: Store the distribution packages
       uses: actions/upload-artifact@v7
       with:
