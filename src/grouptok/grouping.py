@@ -45,7 +45,7 @@ class Grouping:
         object.__setattr__(self, 'token_member', tuple(self.token_member))
         if len(self.token_group) != len(self.token_member):
             raise ValueError('token_group and token_member must have the same length')
-        if self.token_group and (min(self.token_group) < 0 or set(self.token_group) != set(range(max(self.token_group) + 1))):
+        if set(self.token_group) != set(range(self.num_groups)):
             raise ValueError('group ids must be 0, 1, ..., number of groups - 1')
         if any(not 0 <= m < self.max_group_size for m in self.token_member):
             raise ValueError(f'member ids must be between 0 and max_group_size - 1 = {self.max_group_size - 1}')
