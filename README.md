@@ -11,6 +11,8 @@ A translation-grouped tokenizer: subwords that translate each other share a grou
 
 </div>
 
+<!-- the docs site's home page is this README from here on (docs/index.md) -->
+<!-- --8<-- [start:docs] -->
 **grouptok** trains a byte-level BPE tokenizer on sentence pairs. It then aligns the subwords of each pair with a neural
 word aligner and puts subwords that are often aligned into one **group**. Each token becomes a `(group, member)` pair:
 
@@ -52,7 +54,7 @@ from grouptok import GroupedTokenizer
 tok = GroupedTokenizer.from_pretrained("my-tokenizer")
 ```
 
-or one published on the Hugging Face Hub (see [Publishing a tokenizer](#publishing-a-tokenizer)). 
+or one published on the Hugging Face Hub (see [Publishing a trained tokenizer](#publishing-a-trained-tokenizer)). 
 `from_pretrained` reads local folders only, so download the repository first; `huggingface_hub` comes with `tokenizers`:
 
 ```python
@@ -205,8 +207,16 @@ pytest
 The tests run offline. They train on a 500-pair English–French sample in `tests/data` (kept in the repository, not in
 the package) with a stand-in aligner instead of a downloaded model.
 
+Preview the [docs site](https://henryhale.github.io/grouptok/), built from this README and the docstrings
+```bash
+pip install -e ".[docs]"
+mkdocs serve
+```
+
 ## License
 
 Released under the Apache-2.0 license. See [LICENSE](https://github.com/henryhale/grouptok/blob/master/LICENSE) for details.
 
 &copy; 2026-present [Henry Hale](https://github.com/henryhale)
+
+<!-- --8<-- [end:docs] -->

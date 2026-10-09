@@ -16,10 +16,28 @@ PathLike = str | os.PathLike
 
 @dataclass(frozen=True)
 class GroupingConfig:
-    """How alignment links become groups"""
-    max_group_size: int = 8     # members per group at most (the model's member head has this many outputs)
-    min_link_count: int = 5     # a subword pair must be aligned at least this often to be grouped
-    min_dice: float = 0.1       # and have at least this Dice score
+    """Settings for turning alignment links into groups.
+
+    Attributes:
+        max_group_size: The most members a group can have (a model's member head has this many outputs); at least 2.
+        min_link_count: How often a subword pair must be aligned to be grouped; at least 1.
+        min_dice: The lowest Dice score, `2 * links / (occurrences(a) + occurrences(b))`, for a subword pair to be
+            grouped; between 0 and 1.
+
+    Raises:
+        ValueError: If a setting is out of range.
+
+    Examples:
+        >>> from grouptok import GroupingConfig, TokenizerConfig
+        >>> config = TokenizerConfig(grouping=GroupingConfig(max_group_size=4, min_dice=0.2))
+        >>> GroupingConfig(max_group_size=1)
+        Traceback (most recent call last):
+        ...
+        ValueError: max_group_size must be at least 2
+    """
+    max_group_size: int = 8
+    min_link_count: int = 5
+    min_dice: float = 0.1
 
     def __post_init__(self) -> None:
         if self.max_group_size < 2:
@@ -32,10 +50,30 @@ class GroupingConfig:
 
 @dataclass(frozen=True)
 class Grouping:
-    """Every token t is the pair (token_group[t], token_member[t]); the mapping is one-to-one.
+    """A one-to-one map between token ids and `(group, member)` pairs.
 
-    Members of a group are numbered 0, 1, ... in the order they joined it, and no group has more than
-    max_group_size members. Tokens without a translation are groups of their own (member 0)."""
+    Token `t` is the pair `(token_group[t], token_member[t])`. Members of a group are numbered 0, 1, ... in the order
+    they joined it, and tokens without a translation are groups of their own (member 0).
+
+    Attributes:
+        token_group: The group id of each token; group ids are 0 to `num_groups - 1`.
+        token_member: The member id of each token within its group.
+        max_group_size: The bound on member ids (the size of a model's member table); can exceed the largest group.
+
+    Raises:
+        ValueError: If the two tuples differ in length, the group ids are not 0 to `num_groups - 1`, a member id is
+            not below `max_group_size`, or two tokens have the same pair.
+
+    Examples:
+        >>> from grouptok import Grouping
+        >>> g = Grouping.from_groups([[0], [3, 1], [2]])   # tokens 3 and 1 translate each other
+        >>> g.pair(1)
+        (1, 1)
+        >>> g.token(1, 1)
+        1
+        >>> g.members(3)
+        [3, 1]
+    """
     token_group: tuple[int, ...]
     token_member: tuple[int, ...]
     max_group_size: int
@@ -55,12 +93,40 @@ class Grouping:
     # ---- construction
     @classmethod
     def flat(cls, vocab_size: int) -> Grouping:
-        """Every token its own group"""
+        """Make a grouping where every token is a group of its own.
+
+        Args:
+            vocab_size: The number of tokens.
+
+        Returns:
+            A grouping of `vocab_size` one-member groups, with `max_group_size` 1.
+
+        Examples:
+            >>> Grouping.flat(3).groups()
+            [[0], [1], [2]]
+        """
         return cls(tuple(range(vocab_size)), (0,) * vocab_size, 1)
 
     @classmethod
     def from_groups(cls, groups: Sequence[Sequence[int]], max_group_size: int | None = None) -> Grouping:
-        """Groups as lists of token ids in member order; together they must cover tokens 0 .. vocab size - 1 exactly once"""
+        """Build a grouping from lists of token ids.
+
+        Args:
+            groups: The token ids of each group, in member order. Together they must cover the tokens 0 to
+                vocabulary size - 1 exactly once.
+            max_group_size: The bound on member ids; defaults to the size of the largest group.
+
+        Returns:
+            The grouping, with group ids in the order of `groups`.
+
+        Raises:
+            ValueError: If a token id is out of range or in more than one group.
+
+        Examples:
+            >>> g = Grouping.from_groups([[0], [3, 1], [2]], max_group_size=8)
+            >>> g.token_group, g.token_member
+            ((0, 1, 2, 1), (0, 1, 0, 0))
+        """
         vocab_size = sum(map(len, groups))
         token_group, token_member = [-1] * vocab_size, [0] * vocab_size
         for g, members in enumerate(groups):
@@ -72,15 +138,41 @@ class Grouping:
 
     @classmethod
     def load(cls, path: PathLike) -> Grouping:
-        """Read groups.json (a file, or a directory containing it); other keys are ignored"""
+        """Read a grouping from `groups.json`.
+
+        Only `token_group`, `token_member` and `max_group_size` are read; other keys are ignored.
+
+        Args:
+            path: The file, or a directory containing `groups.json`.
+
+        Returns:
+            The grouping.
+
+        Raises:
+            ValueError: If the file holds an invalid grouping.
+
+        Examples:
+            >>> g = Grouping.load("my-tokenizer")   # same as Grouping.load("my-tokenizer/groups.json")
+        """
         path = os.path.join(path, 'groups.json') if os.path.isdir(path) else path
         with open(path, encoding='utf-8') as f:
             data = json.load(f)
         return cls(tuple(data['token_group']), tuple(data['token_member']), int(data['max_group_size']))
 
     def save(self, path: PathLike, tokens: Sequence[str] | None = None) -> None:
-        """Write groups.json (a file, or a directory to write it into); with the vocabulary's token strings, also a
-        readable map of the groups with several members"""
+        """Write the grouping to `groups.json`.
+
+        Args:
+            path: The file, or an existing directory to write `groups.json` into.
+            tokens: The vocabulary's tokens, indexed by id. If given, the file also gets a `groups` map of every group
+                with several members, for people reading it.
+
+        Examples:
+            >>> g = Grouping.from_groups([[0], [3, 1], [2]])
+            >>> g.save("groups.json", tokens=["<pad>", "Ġparc", "Ġthe", "Ġpark"])
+            >>> Grouping.load("groups.json") == g
+            True
+        """
         path = os.path.join(path, 'groups.json') if os.path.isdir(path) else path
         data: dict[str, Any] = {'max_group_size': self.max_group_size, 'token_group': list(self.token_group),
                                 'token_member': list(self.token_member)}
@@ -92,10 +184,22 @@ class Grouping:
     # ---- queries
     @property
     def vocab_size(self) -> int:
+        """The number of tokens.
+
+        Examples:
+            >>> Grouping.from_groups([[0], [3, 1], [2]]).vocab_size
+            4
+        """
         return len(self.token_group)
 
     @property
     def num_groups(self) -> int:
+        """The number of groups.
+
+        Examples:
+            >>> Grouping.from_groups([[0], [3, 1], [2]]).num_groups
+            3
+        """
         return max(self.token_group, default=-1) + 1
 
     @cached_property
@@ -106,21 +210,76 @@ class Grouping:
         return tuple(tuple(group[m] for m in sorted(group)) for group in members)
 
     def groups(self) -> list[list[int]]:
-        """Token ids of every group, in member order"""
+        """List the token ids of every group.
+
+        Returns:
+            The token ids of each group in member order, indexed by group id.
+
+        Examples:
+            >>> Grouping.from_groups([[0], [3, 1], [2]]).groups()
+            [[0], [3, 1], [2]]
+        """
         return [list(members) for members in self._members]
 
     def members(self, token: int) -> list[int]:
-        """Token ids of the token's group, in member order (the token included)"""
+        """List the token ids of a token's group.
+
+        Args:
+            token: A token id.
+
+        Returns:
+            The token ids of its group in member order, the token included.
+
+        Examples:
+            >>> Grouping.from_groups([[0], [3, 1], [2]]).members(1)
+            [3, 1]
+        """
         return list(self._members[self.token_group[token]])
 
     def group_sizes(self) -> dict[int, int]:
-        """Group size -> number of groups of that size"""
+        """Count the groups of each size.
+
+        Returns:
+            The number of groups of each group size, keyed by size in increasing order.
+
+        Examples:
+            >>> Grouping.from_groups([[0], [3, 1], [2]]).group_sizes()
+            {1: 2, 2: 1}
+        """
         return dict(sorted(Counter(map(len, self._members)).items()))
 
     def pair(self, token: int) -> tuple[int, int]:
+        """Map a token id to its `(group, member)` pair.
+
+        Args:
+            token: A token id.
+
+        Returns:
+            The token's `(group, member)` pair.
+
+        Examples:
+            >>> Grouping.from_groups([[0], [3, 1], [2]]).pair(3)
+            (1, 0)
+        """
         return self.token_group[token], self.token_member[token]
 
     def token(self, group: int, member: int) -> int:
+        """Map a `(group, member)` pair back to its token id.
+
+        Args:
+            group: A group id.
+            member: A member id within that group.
+
+        Returns:
+            The token id.
+
+        Raises:
+            IndexError: If there is no such group, or the group has no such member.
+
+        Examples:
+            >>> Grouping.from_groups([[0], [3, 1], [2]]).token(1, 0)
+            3
+        """
         return self._members[group][member]
 
 

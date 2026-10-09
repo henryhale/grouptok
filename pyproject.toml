@@ -28,11 +28,13 @@ dependencies = ["tokenizers>=0.15"]
 
 [project.urls]
 Homepage = "https://github.com/henryhale/grouptok"
+Documentation = "https://henryhale.github.io/grouptok/"
 Issues = "https://github.com/henryhale/grouptok/issues"
 
 [project.optional-dependencies]
 train = ["torch>=2.0", "transformers>=4.38"]   # subword alignment with a neural encoder
 test = ["pytest>=7"]
+docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=1.0"]   # the docs site (mkdocs.yml)
 
 [project.scripts]
 grouptok = "grouptok.cli:main"
