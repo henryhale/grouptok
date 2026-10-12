@@ -186,6 +186,10 @@ class GroupedTokenizer:
             >>> from grouptok import Source
             >>> tok = GroupedTokenizer.train([Source("en-fr.jsonl", columns=("en", "fr"), rows=100_000),
             ...                               Source("en-de.jsonl", columns=("en", "de"))])
+
+            Or mix pairs and sources:
+
+            >>> tok = GroupedTokenizer.train(pairs + [Source("en-de.jsonl", columns=("en", "de"))])
         """
         items = list(pairs)
         plain = [(a, b) for a, b in (p for p in items if not isinstance(p, Source)) if a and b]
