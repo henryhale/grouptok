@@ -151,6 +151,14 @@ class LinkCounts:
         """Dice coefficient of a link: 2 * links / (occurrences of a + occurrences of b)"""
         return 2 * self.links.get((a, b), 0) / (self.occurrences[a] + self.occurrences[b])
 
+    def __add__(self, other: LinkCounts) -> LinkCounts:
+        """The pooled statistics of two alignment runs over the same vocabulary (e.g. with different aligners)"""
+        if other.vocab_size != self.vocab_size:
+            raise ValueError('link counts over different vocabularies')
+        links = Counter(self.links)
+        links.update(other.links)
+        return LinkCounts(self.vocab_size, dict(links), tuple(a + b for a, b in zip(self.occurrences, other.occurrences)))
+
 
 def subword_vectors(texts: list[str], bpe: tokenizers.Tokenizer, aligner: Aligner) -> tuple[Tensor, Tensor, Tensor]:
     """One side of a batch -> padded BPE ids [B, N], covered mask [B, N] and BPE vectors [B, N, H]. Each subword gets the

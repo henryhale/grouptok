@@ -1,15 +1,20 @@
-"""End-to-end training on the sample with the offline aligner, persistence and encoding."""
+"""End-to-end training on the sample with the offline aligner, training from sources, persistence and encoding."""
 import json
 
 import pytest
 
-from conftest import CHECKED
-from grouptok import GroupedTokenizer
+from conftest import CHECKED, FakeAligner, train_config
+from grouptok import AlignerConfig, GroupedTokenizer, Source
 
 
 def single_token(tok, word):
     ids = tok.encode(' ' + word)
     return ids[0] if len(ids) == 1 else None
+
+
+def write_jsonl(path, rows):
+    path.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows), encoding='utf-8')
+    return path
 
 
 def test_translations_share_a_group(trained):
@@ -82,3 +87,24 @@ def test_transformers_tokenizer(trained, tmp_path):
 def test_training_needs_pairs():
     with pytest.raises(ValueError):
         GroupedTokenizer.train([('', 'vide'), ('empty', '')])
+
+
+def test_sources_with_their_own_aligner_pool_links(trained, pairs, tmp_path, monkeypatch):
+    """Pairs split over sources with different aligners give the same tokenizer as one alignment pass over all of them:
+    the link counts are pooled (splitting at 256 keeps every batch of 64 the same)"""
+    import grouptok.align
+    loaded = []
+
+    def fake_hf_aligner(config):
+        loaded.append(config)
+        return FakeAligner()
+
+    monkeypatch.setattr(grouptok.align, 'HFAligner', fake_hf_aligner)
+    own = AlignerConfig(model='another-encoder', device='cpu')
+    first = write_jsonl(tmp_path / 'first.jsonl', [{'en': en, 'fr': fr} for en, fr in pairs[:256]])
+    second = write_jsonl(tmp_path / 'second.jsonl', [{'en': en, 'fr': fr} for en, fr in pairs[256:]])
+    tok = GroupedTokenizer.train([Source(first, columns=('en', 'fr'), aligner=own), Source(second, columns=('en', 'fr'))],
+                                 train_config(), aligner=FakeAligner(), progress=False)
+    assert loaded == [own]   # the second source used the aligner given to train
+    assert tok.tokenizer.get_vocab() == trained.tokenizer.get_vocab()
+    assert tok.grouping == trained.grouping
