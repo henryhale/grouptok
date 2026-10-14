@@ -1,10 +1,11 @@
 """End-to-end training on the sample with the offline aligner, training from sources, persistence and encoding."""
+import dataclasses
 import json
 
 import pytest
 
 from conftest import CHECKED, FakeAligner, train_config
-from grouptok import AlignerConfig, GroupedTokenizer, Source
+from grouptok import AlignerConfig, GroupedTokenizer, Source, TokenizerConfig
 
 
 def single_token(tok, word):
@@ -34,6 +35,8 @@ def test_grouping_invariants(trained):
     assert max(map(len, g.groups())) <= g.max_group_size == 8
     for token in trained.special_tokens + trained.additional_tokens:  # reserved tokens are never grouped
         assert g.members(trained.token_to_id(token)) == [trained.token_to_id(token)]
+    fragments = [t for t in range(g.vocab_size) if '�' in trained.tokenizer.decode([t])]   # parts of a UTF-8 character
+    assert fragments and all(g.members(t) == [t] for t in fragments)
     assert (trained.pad_id, trained.bos_id, trained.eos_id) == (0, 1, 2)
     assert any(len(m) > 1 for m in g.groups())
 
@@ -82,6 +85,26 @@ def test_transformers_tokenizer(trained, tmp_path):
     assert auto(text, add_special_tokens=False).input_ids == trained.encode(text)
     assert auto.pad_token_id == trained.pad_id and auto.eos_token_id == trained.eos_id
     assert auto.decode(trained.encode(text), skip_special_tokens=True) == text   # '<think>' is not a special token
+
+
+def test_pretrained_tokenizer(trained, pairs, tmp_path):
+    """A pretrained tokenizer's folder is grouped as is (vocab_size is ignored), and saving copies its files unchanged"""
+    source, out = tmp_path / 'pretrained', tmp_path / 'grouped'
+    trained.save_pretrained(source)   # stands in for snapshot_download("Qwen/Qwen2.5-0.5B", allow_patterns=["*token*"])
+    (source / 'groups.json').unlink()
+    (source / 'tokenizer_config.json').write_text('{"bos_token": null, "eos_token": "<|im_end|>"}')   # no pad / bos, as in Qwen2.5
+    (source / 'model.safetensors').write_bytes(b'weights')   # not a tokenizer file: not copied
+    gpt2_like = dataclasses.replace(train_config(), vocab_size=64, special_tokens=('<|endoftext|>',) * 3, additional_tokens=())
+    tok = GroupedTokenizer.train(pairs, gpt2_like, tokenizer=source, aligner=FakeAligner(), progress=False)
+    assert tok.tokenizer.get_vocab() == trained.tokenizer.get_vocab()
+    assert tok.grouping == trained.grouping   # the tokens no longer reserved never occur in the pairs
+    tok.save_pretrained(out)
+    copied = {p.name: p.read_bytes() for p in source.iterdir() if p.name != 'model.safetensors'}
+    assert {p.name: p.read_bytes() for p in out.iterdir() if p.name != 'groups.json'} == copied
+    loaded = GroupedTokenizer.from_pretrained(out)
+    assert loaded.grouping == tok.grouping and loaded.special_tokens == ('<|endoftext|>',) * 3 and loaded.additional_tokens == ()
+    with pytest.raises(ValueError, match='<s>'):   # raised before aligning: object() has no encode
+        GroupedTokenizer.train(pairs, TokenizerConfig(special_tokens=('<pad>', '<s>', '</s>')), tokenizer=source, aligner=object())
 
 
 def test_training_needs_pairs():
