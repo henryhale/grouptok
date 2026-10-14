@@ -7,7 +7,7 @@ transformers are needed here (pip install grouptok[train]); they are imported on
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -25,8 +25,10 @@ class AlignerConfig:
             awesome-align, ...).
         layer: The hidden layer whose vectors are compared.
         threshold: Two subwords are linked when the softmax of their similarity exceeds this in both directions.
-        batch_size: Sentence pairs per batch.
-        max_length: The encoder's input length in word pieces; longer sentences are truncated.
+        batch_tokens: The size of a batch: its pairs × the BPE tokens of its longest sentence. Pairs are batched by
+            length, so short ones go many at a time and one longer than this goes alone.
+        max_length: The encoder's input length in word pieces, at most its limit (512 for BERT and XLM-R models).
+            Longer sentences are encoded in windows of this length that overlap by a quarter, so no word piece is cut.
         device: The torch device to run on; `None` picks cuda when available, else cpu.
         fp16: Run the encoder in half precision on cuda. The similarity math stays in fp32.
 
@@ -37,8 +39,8 @@ class AlignerConfig:
     model: str = 'aneuraz/awesome-align-with-co'
     layer: int = 8
     threshold: float = 1e-3
-    batch_size: int = 64
-    max_length: int = 128
+    batch_tokens: int = 8192
+    max_length: int = 512
     device: str | None = None
     fp16: bool = True
 
@@ -69,7 +71,8 @@ class Aligner(Protocol):
         Returns:
             The vectors `[batch, length, dim]` and the spans `[batch, length, 2]`, on one device. Spans are character
                 offsets into each text; positions that are not word pieces (special tokens, padding) have empty spans
-                such as `(0, 0)`.
+                such as `(0, 0)`. Every word piece of a text must be there, since a subword no piece overlaps is not
+                aligned; a piece given more than once (e.g. by overlapping windows) gets the average of its vectors.
 
         Examples:
             >>> vectors, spans = aligner.encode(["The king", "Le roi"])
@@ -124,7 +127,8 @@ class HFAligner:
 
         Returns:
             The fp32 vectors `[batch, length, dim]` of the configured layer and the spans `[batch, length, 2]`, on the
-                aligner's device (see `Aligner.encode`).
+                aligner's device (see `Aligner.encode`). A text longer than `max_length` word pieces is encoded in
+                overlapping windows, laid side by side in its row.
 
         Examples:
             >>> vectors, spans = aligner.encode(["The king", "Le roi"])
@@ -132,12 +136,15 @@ class HFAligner:
             torch.float32
         """
         import torch
-        enc =self.tokenizer(texts, return_offsets_mapping=True, padding=True, truncation=True, max_length=self.config.max_length,
-                             return_tensors='pt')
+        from torch.nn.utils.rnn import pad_sequence
+        enc = self.tokenizer(texts, return_offsets_mapping=True, padding=True, truncation=True, max_length=self.config.max_length,
+                             stride=self.config.max_length // 4, return_overflowing_tokens=True, return_tensors='pt')
+        windows = torch.bincount(enc.pop('overflow_to_sample_mapping'), minlength=len(texts)).tolist()   # consecutive per text
         spans = enc.pop('offset_mapping').to(self.device)
         with torch.no_grad(), torch.autocast('cuda', dtype=torch.float16, enabled=self.config.fp16 and str(self.device).startswith('cuda')):
             hidden = self.model(**enc.to(self.device), output_hidden_states=True).hidden_states[self.config.layer]
-        return hidden.float(), spans
+        # a piece in two windows comes twice, with the same span; subword_vectors averages its two vectors
+        return tuple(pad_sequence([w.flatten(0, 1) for w in t.split(windows)], batch_first=True) for t in (hidden.float(), spans))
 
 
 @dataclass(frozen=True)
@@ -162,8 +169,8 @@ class LinkCounts:
 
 def subword_vectors(texts: list[str], bpe: tokenizers.Tokenizer, aligner: Aligner) -> tuple[Tensor, Tensor, Tensor]:
     """One side of a batch -> padded BPE ids [B, N], covered mask [B, N] and BPE vectors [B, N, H]. Each subword gets the
-    average of the word pieces whose character spans overlap it; padding and subwords without a word piece (truncated or
-    whitespace-only) are not covered"""
+    average of the word pieces whose character spans overlap it; padding and subwords without a word piece (whitespace)
+    are not covered"""
     import torch
     hidden, spans = aligner.encode(texts)
     device = hidden.device
@@ -178,9 +185,25 @@ def subword_vectors(texts: list[str], bpe: tokenizers.Tokenizer, aligner: Aligne
     return ids, count > 0, (overlap @ hidden) / count.clamp(min=1).unsqueeze(-1)
 
 
+def length_batches(pairs: Sequence[tuple[str, str]], bpe: tokenizers.Tokenizer, batch_tokens: int) -> Iterator[list[int]]:
+    """Indices of pairs in batches of similar length, shortest first. A batch holds at most batch_tokens tokens, counted
+    as its pairs × its longest sentence, except that a longer pair goes alone"""
+    texts = [text for pair in pairs for text in pair]
+    lengths = [len(e) for start in range(0, len(texts), 10_000) for e in bpe.encode_batch(texts[start:start + 10_000])]
+    longest = [max(lengths[2 * i], lengths[2 * i + 1]) for i in range(len(pairs))]
+    batch: list[int] = []
+    for i in sorted(range(len(pairs)), key=longest.__getitem__):
+        if batch and (len(batch) + 1) * longest[i] > batch_tokens:
+            yield batch
+            batch = []
+        batch.append(i)
+    if batch:
+        yield batch
+
+
 def align_pairs(pairs: Sequence[tuple[str, str]], bpe: tokenizers.Tokenizer, config: AlignerConfig = AlignerConfig(), *,
                 aligner: Aligner | None = None, progress: bool = True) -> LinkCounts:
-    """Count subword links over sentence pairs, a batch at a time on the aligner's device.
+    """Count subword links over sentence pairs, a batch of similar lengths at a time on the aligner's device.
 
     A subword pair (i, j) of a sentence pair is linked when softmax_j(S[i]) and softmax_i(S[:, j]) both exceed
     config.threshold, where S is the similarity of their vectors; each sentence's softmax spans only its own subwords.
@@ -190,9 +213,10 @@ def align_pairs(pairs: Sequence[tuple[str, str]], bpe: tokenizers.Tokenizer, con
     vocab_size = bpe.get_vocab_size()
     links: Counter[tuple[int, int]] = Counter()
     occurrences = torch.zeros(vocab_size, dtype=torch.long)
+    done = 0
     with torch.no_grad():
-        for start in range(0, len(pairs), config.batch_size):
-            first, second = (list(side) for side in zip(*pairs[start:start + config.batch_size]))
+        for k, batch in enumerate(length_batches(pairs, bpe, config.batch_tokens)):
+            first, second = (list(side) for side in zip(*(pairs[i] for i in batch)))
             first_ids, first_cov, first_vec = subword_vectors(first, bpe, aligner)
             second_ids, second_cov, second_vec = subword_vectors(second, bpe, aligner)
             seen = torch.bincount(first_ids[first_cov], minlength=vocab_size) + torch.bincount(second_ids[second_cov], minlength=vocab_size)
@@ -204,6 +228,7 @@ def align_pairs(pairs: Sequence[tuple[str, str]], bpe: tokenizers.Tokenizer, con
             a_tok, b_tok = first_ids[b, i], second_ids[b, j]
             keep = a_tok != b_tok  # identical subwords on both sides are already one token
             links.update(zip(a_tok[keep].tolist(), b_tok[keep].tolist()))
-            if progress and start // config.batch_size % 100 == 0:
-                print(f'aligned {start + len(first)}/{len(pairs)} pairs, {len(links)} distinct links')
+            done += len(batch)
+            if progress and k % 100 == 0:
+                print(f'aligned {done}/{len(pairs)} pairs, {len(links)} distinct links')
     return LinkCounts(vocab_size, dict(links), tuple(occurrences.tolist()))

@@ -36,7 +36,7 @@ def _train(args: argparse.Namespace) -> None:
         vocab_size=args.vocab_size, special_tokens=tuple(t for t in args.special_tokens.split(',') if t),
         additional_tokens=tuple(t for t in args.additional_tokens.split(',') if t), chat_template=chat_template,
         grouping=GroupingConfig(max_group_size=args.max_group_size, min_link_count=args.min_link_count, min_dice=args.min_dice),
-        aligner=AlignerConfig(model=args.aligner, layer=args.layer, threshold=args.threshold, batch_size=args.batch_size,
+        aligner=AlignerConfig(model=args.aligner, layer=args.layer, threshold=args.threshold, batch_tokens=args.batch_tokens,
                               max_length=args.max_length, device=args.device))
     if args.config:
         with open(args.config, encoding='utf-8') as f:
@@ -87,7 +87,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     train.add_argument('--aligner', default=AlignerConfig.model, help='Hugging Face encoder used to align subwords')
     train.add_argument('--layer', type=int, default=AlignerConfig.layer)
     train.add_argument('--threshold', type=float, default=AlignerConfig.threshold)
-    train.add_argument('--batch-size', type=int, default=AlignerConfig.batch_size)
+    train.add_argument('--batch-tokens', type=int, default=AlignerConfig.batch_tokens)
     train.add_argument('--max-length', type=int, default=AlignerConfig.max_length)
     train.add_argument('--device', default=None, help='default: cuda when available')
     train.add_argument('--special-tokens', default='', help='pad,bos,eos, e.g. "<pad>,<s>,</s>"; none by default')

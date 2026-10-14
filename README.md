@@ -187,7 +187,7 @@ TokenizerConfig(
     chat_template=None,                                               # Jinja template saved to tokenizer_config.json
     grouping=GroupingConfig(max_group_size=8, min_link_count=5, min_dice=0.1),
     aligner=AlignerConfig(model="aneuraz/awesome-align-with-co", layer=8, threshold=1e-3,
-                          batch_size=64, max_length=128, device=None, fp16=True),
+                          batch_tokens=8192, max_length=512, device=None, fp16=True),
 )
 ```
 
