@@ -251,17 +251,16 @@ grouptok train --config sources.json --out my-tokenizer --vocab-size 49152 --ali
 - `groups.json`:
 
 ```json
-{"max_group_size": 8, "token_group": [0, 1, 2, 3, ...], "token_member": [0, 0, 0, 0, ...],
- "special_tokens": ["<|endoftext|>", "<|im_start|>", "<|im_end|>"], "additional_tokens": [],
- "groups": {"412": ["Ġhouse", "Ġmaison", "ĠHaus"], ...}}
+{"max_group_size": 8, "token_group": [5120, 5121, 5122, 412, ...], "token_member": [0, 0, 0, 0, ...],
+ "special_tokens": ["<|endoftext|>", "<|im_start|>", "<|im_end|>"], "additional_tokens": []}
 ```
 
 A pretrained tokenizer, or one loaded with `from_pretrained`, gets its tokenizer files copied as they are instead of
 the first two.
 
-`groups` is only there for people reading the file. It lists the groups with several members as raw BPE tokens, where
-`Ġ` marks a leading space. 
-`Grouping.load` reads `token_group` and `token_member`, and ignores any other keys.
+`token_group` and `token_member` give the `(group, member)` pair of each token id; `max_group_size` bounds the member
+ids. `Grouping.load` reads these three and ignores any other keys. To read the groups as text, use
+`tok.readable_groups()` or `grouptok inspect`.
 
 ## Development
 

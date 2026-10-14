@@ -324,8 +324,8 @@ class GroupedTokenizer:
                 file = os.path.join(self.source, name)
                 if os.path.isfile(file) and any(fnmatch(name, pattern) for pattern in TOKENIZER_FILES):
                     shutil.copy(file, path)
-        self.grouping.save(os.path.join(path, 'groups.json'), tokens=[self.tokenizer.id_to_token(t) for t in range(self.vocab_size)],
-                           special_tokens=list(self.special_tokens), additional_tokens=list(self.additional_tokens))
+        self.grouping.save(os.path.join(path, 'groups.json'), special_tokens=list(self.special_tokens),
+                           additional_tokens=list(self.additional_tokens))
 
     def _hf_config(self) -> dict[str, Any]:
         pad, bos, eos = self.special_tokens or (None, None, None)
