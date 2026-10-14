@@ -11,7 +11,7 @@ from typing import Any
 from .align import AlignerConfig
 from .grouping import GroupingConfig
 from .source import Source
-from .tokenizer import DEFAULT_SPECIAL_TOKENS, GroupedTokenizer, TokenizerConfig
+from .tokenizer import GroupedTokenizer, TokenizerConfig
 
 
 def pairs_source(spec: str, columns: Sequence[str] | None = None, limit: int | None = None) -> Source:
@@ -33,7 +33,7 @@ def config_source(entry: dict[str, Any], aligner: AlignerConfig) -> Source:
 def _train(args: argparse.Namespace) -> None:
     chat_template = open(args.chat_template, encoding='utf-8').read() if args.chat_template else None
     config = TokenizerConfig(
-        vocab_size=args.vocab_size, special_tokens=tuple(args.special_tokens.split(',')),
+        vocab_size=args.vocab_size, special_tokens=tuple(t for t in args.special_tokens.split(',') if t),
         additional_tokens=tuple(t for t in args.additional_tokens.split(',') if t), chat_template=chat_template,
         grouping=GroupingConfig(max_group_size=args.max_group_size, min_link_count=args.min_link_count, min_dice=args.min_dice),
         aligner=AlignerConfig(model=args.aligner, layer=args.layer, threshold=args.threshold, batch_size=args.batch_size,
@@ -90,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     train.add_argument('--batch-size', type=int, default=AlignerConfig.batch_size)
     train.add_argument('--max-length', type=int, default=AlignerConfig.max_length)
     train.add_argument('--device', default=None, help='default: cuda when available')
-    train.add_argument('--special-tokens', default=','.join(DEFAULT_SPECIAL_TOKENS), help='pad,bos,eos')
+    train.add_argument('--special-tokens', default='', help='pad,bos,eos, e.g. "<pad>,<s>,</s>"; none by default')
     train.add_argument('--additional-tokens', default='', help='comma-separated reserved tokens, e.g. "<think>,</think>"')
     train.add_argument('--chat-template', help='file with a Jinja chat template')
     train.add_argument('--quiet', action='store_true')

@@ -56,8 +56,8 @@ def pairs():
 def train_config():
     """The training settings of the `trained` fixture"""
     from grouptok import AlignerConfig, TokenizerConfig
-    return TokenizerConfig(vocab_size=1500, additional_tokens=('<think>', '</think>'), chat_template='{{ messages }}',
-                           aligner=AlignerConfig(device='cpu'))
+    return TokenizerConfig(vocab_size=1500, special_tokens=('<|endoftext|>', '<|im_start|>', '<|im_end|>'),
+                           additional_tokens=('<think>', '</think>'), chat_template='{{ messages }}', aligner=AlignerConfig(device='cpu'))
 
 
 @pytest.fixture(scope='session')

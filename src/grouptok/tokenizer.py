@@ -20,7 +20,6 @@ from .source import Source
 PathLike = str | os.PathLike
 Pair = tuple[str, str]
 
-DEFAULT_SPECIAL_TOKENS: tuple[str, str, str] = ('<|endoftext|>', '<|im_start|>', '<|im_end|>')  # pad, bos, eos -> ids 0, 1, 2
 # the files of a tokenizer folder that save_pretrained copies (transformers' names), leaving out model weights and the like
 TOKENIZER_FILES = ('*token*', 'vocab*', 'merges.txt', '*.model', 'chat_template*')
 
@@ -31,8 +30,9 @@ class TokenizerConfig:
 
     Attributes:
         vocab_size: Size of the BPE vocabulary, reserved tokens included; ignored when `train` gets a pretrained tokenizer.
-        special_tokens: The `(pad, bos, eos)` tokens. They get the first ids of a trained BPE (0, 1 and 2), and
-            `decode(skip_special=True)` drops them. They may repeat, e.g. `("<|endoftext|>",) * 3` for GPT-2's tokenizer.
+        special_tokens: The `(pad, bos, eos)` tokens, or none (the default). They get the first ids of a trained BPE
+            (0, 1 and 2), and `decode(skip_special=True)` drops them. They may repeat, e.g. `("<|endoftext|>",) * 3` for
+            GPT-2's tokenizer.
         additional_tokens: More reserved tokens after the special ones (e.g. `'<think>'`). They are never grouped and
             are kept when decoding.
         chat_template: Jinja chat template saved to `tokenizer_config.json` for transformers' `apply_chat_template`.
@@ -41,22 +41,22 @@ class TokenizerConfig:
         aligner: The neural aligner and how links are extracted.
 
     Raises:
-        ValueError: If `special_tokens` is not three tokens, or an additional token appears twice or is also a special
-            token.
+        ValueError: If `special_tokens` is neither empty nor three tokens, or an additional token appears twice or is
+            also a special token.
 
     Examples:
         >>> from grouptok import GroupingConfig, TokenizerConfig
-        >>> config = TokenizerConfig(vocab_size=32000, additional_tokens=("<think>", "</think>"),
-        ...                          grouping=GroupingConfig(max_group_size=4))
-        >>> config.special_tokens
-        ('<|endoftext|>', '<|im_start|>', '<|im_end|>')
+        >>> config = TokenizerConfig(vocab_size=32000, special_tokens=("<pad>", "<s>", "</s>"),
+        ...                          additional_tokens=("<think>", "</think>"), grouping=GroupingConfig(max_group_size=4))
+        >>> TokenizerConfig().special_tokens
+        ()
         >>> TokenizerConfig(special_tokens=("<pad>", "<s>"))
         Traceback (most recent call last):
         ...
-        ValueError: special_tokens must be (pad, bos, eos)
+        ValueError: special_tokens must be (pad, bos, eos), or empty for none
     """
     vocab_size: int = 8192
-    special_tokens: tuple[str, str, str] = DEFAULT_SPECIAL_TOKENS
+    special_tokens: tuple[str, ...] = ()
     additional_tokens: tuple[str, ...] = ()
     chat_template: str | None = None
     model_max_length: int = 131072
@@ -66,13 +66,13 @@ class TokenizerConfig:
     def __post_init__(self) -> None:
         object.__setattr__(self, 'special_tokens', tuple(self.special_tokens))
         object.__setattr__(self, 'additional_tokens', tuple(self.additional_tokens))
-        if len(self.special_tokens) != 3:
-            raise ValueError('special_tokens must be (pad, bos, eos)')
+        if len(self.special_tokens) not in (0, 3):
+            raise ValueError('special_tokens must be (pad, bos, eos), or empty for none')
         if len(set(self.additional_tokens)) != len(self.additional_tokens) or set(self.additional_tokens) & set(self.special_tokens):
             raise ValueError('additional tokens must be distinct and not special tokens')
 
 
-def train_bpe(texts: Iterable[str], vocab_size: int, reserved_tokens: Sequence[str] = DEFAULT_SPECIAL_TOKENS, *,
+def train_bpe(texts: Iterable[str], vocab_size: int, reserved_tokens: Sequence[str] = (), *,
               progress: bool = True) -> Tokenizer:
     """Byte-level BPE (no prefix space) with the reserved tokens as its first ids"""
     tokenizer = Tokenizer(models.BPE())
@@ -94,7 +94,7 @@ class GroupedTokenizer:
     Attributes:
         tokenizer: The underlying `tokenizers.Tokenizer`.
         grouping: The `(group, member)` pair of every token.
-        special_tokens: The `(pad, bos, eos)` tokens.
+        special_tokens: The `(pad, bos, eos)` tokens, or `()` for none.
         additional_tokens: More reserved tokens, kept when decoding.
         chat_template: Jinja chat template for transformers, or `None`.
         model_max_length: Maximum sequence length recorded for transformers.
@@ -109,7 +109,7 @@ class GroupedTokenizer:
         [' king', ' roi']
     """
 
-    def __init__(self, tokenizer: Tokenizer, grouping: Grouping, *, special_tokens: Sequence[str] = DEFAULT_SPECIAL_TOKENS,
+    def __init__(self, tokenizer: Tokenizer, grouping: Grouping, *, special_tokens: Sequence[str] = (),
                  additional_tokens: Sequence[str] = (), chat_template: str | None = None, model_max_length: int = 131072,
                  source: PathLike | None = None) -> None:
         """Combine a trained BPE tokenizer with a grouping of its vocabulary.
@@ -119,7 +119,8 @@ class GroupedTokenizer:
         Args:
             tokenizer: A byte-level BPE tokenizer.
             grouping: A grouping of exactly the tokenizer's vocabulary.
-            special_tokens: The `(pad, bos, eos)` tokens; all must be in the vocabulary.
+            special_tokens: The `(pad, bos, eos)` tokens, all in the vocabulary, or `()` for none: then `pad_id`,
+                `bos_id` and `eos_id` are `None` and `encode` can't add bos or eos.
             additional_tokens: More reserved tokens; all must be in the vocabulary.
             chat_template: Jinja chat template for transformers, or `None`.
             model_max_length: Maximum sequence length recorded for transformers.
@@ -187,7 +188,8 @@ class GroupedTokenizer:
         Examples:
             >>> from grouptok import GroupedTokenizer, TokenizerConfig
             >>> pairs = [("The king said unto the people", "Le roi dit au peuple")]   # thousands of pairs in practice
-            >>> tok = GroupedTokenizer.train(pairs, TokenizerConfig(vocab_size=8192))
+            >>> special = ("<|endoftext|>", "<|im_start|>", "<|im_end|>")   # pad, bos, eos; none unless set
+            >>> tok = GroupedTokenizer.train(pairs, TokenizerConfig(vocab_size=8192, special_tokens=special))
             >>> tok.save_pretrained("my-tokenizer")
 
             For more than two languages, pool the pairs of every language pair:
@@ -326,7 +328,7 @@ class GroupedTokenizer:
                            special_tokens=list(self.special_tokens), additional_tokens=list(self.additional_tokens))
 
     def _hf_config(self) -> dict[str, Any]:
-        pad, bos, eos = self.special_tokens
+        pad, bos, eos = self.special_tokens or (None, None, None)
         config = {
             'add_bos_token': False,
             'add_eos_token': False,
@@ -334,7 +336,7 @@ class GroupedTokenizer:
             'added_tokens_decoder': {str(self.tokenizer.token_to_id(t)): {'content': t, 'lstrip': False, 'normalized': False, 'rstrip': False,
                                                                           'single_word': False, 'special': t in self.special_tokens}
                                      for t in self.special_tokens + self.additional_tokens},
-            'additional_special_tokens': [bos, eos],
+            'additional_special_tokens': list(self.special_tokens[1:]),   # bos and eos, if any
             'bos_token': bos,
             'clean_up_tokenization_spaces': False,
             'eos_token': eos,
@@ -366,34 +368,35 @@ class GroupedTokenizer:
         return self.vocab_size
 
     @property
-    def pad_id(self) -> int:
-        """The id of the padding token (0 for a trained tokenizer).
+    def pad_id(self) -> int | None:
+        """The id of the padding token: 0 in a BPE trained with special tokens, `None` without special tokens.
 
         Examples:
             >>> tok.pad_id
             0
         """
-        return self.tokenizer.token_to_id(self.special_tokens[0])
+        return self.tokenizer.token_to_id(self.special_tokens[0]) if self.special_tokens else None
 
     @property
-    def bos_id(self) -> int:
-        """The id of the beginning-of-sequence token (1 for a trained tokenizer).
+    def bos_id(self) -> int | None:
+        """The id of the beginning-of-sequence token: 1 in a BPE trained with special tokens, `None` without special
+        tokens.
 
         Examples:
             >>> tok.bos_id
             1
         """
-        return self.tokenizer.token_to_id(self.special_tokens[1])
+        return self.tokenizer.token_to_id(self.special_tokens[1]) if self.special_tokens else None
 
     @property
-    def eos_id(self) -> int:
-        """The id of the end-of-sequence token (2 for a trained tokenizer).
+    def eos_id(self) -> int | None:
+        """The id of the end-of-sequence token: 2 in a BPE trained with special tokens, `None` without special tokens.
 
         Examples:
             >>> tok.eos_id
             2
         """
-        return self.tokenizer.token_to_id(self.special_tokens[2])
+        return self.tokenizer.token_to_id(self.special_tokens[2]) if self.special_tokens else None
 
     def token_to_id(self, token: str) -> int | None:
         """Look up the id of a token.
@@ -439,6 +442,9 @@ class GroupedTokenizer:
         Returns:
             The token ids.
 
+        Raises:
+            ValueError: If `bos` or `eos` is set and the tokenizer has no special tokens.
+
         Examples:
             >>> ids = tok.encode("The king", bos=True, eos=True)
             >>> ids[0] == tok.bos_id and ids[-1] == tok.eos_id
@@ -446,7 +452,8 @@ class GroupedTokenizer:
             >>> tok.decode(ids)
             'The king'
         """
-        return [self.bos_id] * bos + self.tokenizer.encode(text, add_special_tokens=False).ids + [self.eos_id] * eos
+        head, tail = self._ends(bos, eos)
+        return head + self.tokenizer.encode(text, add_special_tokens=False).ids + tail
 
     def encode_batch(self, texts: Sequence[str], *, bos: bool = False, eos: bool = False) -> list[list[int]]:
         """Encode several texts in parallel.
@@ -459,11 +466,21 @@ class GroupedTokenizer:
         Returns:
             The token ids of each text, in order.
 
+        Raises:
+            ValueError: If `bos` or `eos` is set and the tokenizer has no special tokens.
+
         Examples:
             >>> tok.encode_batch(["The king", "Le roi"]) == [tok.encode("The king"), tok.encode("Le roi")]
             True
         """
-        return [[self.bos_id] * bos + e.ids + [self.eos_id] * eos for e in self.tokenizer.encode_batch(list(texts), add_special_tokens=False)]
+        head, tail = self._ends(bos, eos)
+        return [head + e.ids + tail for e in self.tokenizer.encode_batch(list(texts), add_special_tokens=False)]
+
+    def _ends(self, bos: bool, eos: bool) -> tuple[list[int], list[int]]:
+        """The ids to put before and after an encoded text"""
+        if (bos or eos) and not self.special_tokens:
+            raise ValueError('the tokenizer has no special tokens, so no bos or eos to add')
+        return [self.bos_id] * bos, [self.eos_id] * eos
 
     def tokenize(self, text: str) -> list[str]:
         """Split a text into tokens.
