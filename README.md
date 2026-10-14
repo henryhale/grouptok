@@ -153,6 +153,31 @@ tok = GroupedTokenizer.train(sources, TokenizerConfig(vocab_size=49152, aligner=
 
 Sources are read into memory before training, like pairs.
 
+## Grouping a pretrained tokenizer
+
+Pass a folder holding a pretrained tokenizer's files, `tokenizer.json` among them, and `train` groups its vocabulary
+instead of training a BPE. The vocabulary and the token ids stay the same, so the grouping fits the models that use
+that tokenizer:
+
+```python
+from huggingface_hub import snapshot_download
+from grouptok import GroupedTokenizer, TokenizerConfig
+
+qwen = snapshot_download("Qwen/Qwen2.5-0.5B", allow_patterns=["*token*"])   # the tokenizer files only
+tok = GroupedTokenizer.train(sources, tokenizer=qwen)
+tok.save_pretrained("qwen-grouped")   # Qwen's tokenizer files as they are, plus groups.json
+
+gpt2 = snapshot_download("openai-community/gpt2", allow_patterns=["*token*"])
+tok = GroupedTokenizer.train(sources, TokenizerConfig(special_tokens=("<|endoftext|>",) * 3), tokenizer=gpt2)
+```
+
+- `special_tokens` and `additional_tokens` must already be in the vocabulary (Qwen2.5's are grouptok's defaults); they
+  may repeat, as GPT-2 uses one token for pad, bos and eos. `vocab_size` is ignored.
+- `save_pretrained` copies the folder's tokenizer files (`tokenizer.json`, `tokenizer_config.json`, `vocab.json`, ...)
+  unchanged, and leaves out anything else, like model weights.
+- Groups can only link tokens that exist. A vocabulary with few whole-word tokens in a language gives that language few
+  groups: multilingual vocabularies (Qwen2.5, Llama 3, Gemma) suit better than English-centric ones like GPT-2's.
+
 ## Configuration
 
 ```python
@@ -206,7 +231,8 @@ grouptok train --config sources.json --out my-tokenizer --vocab-size 49152 --ali
 
 ## How it works
 
-1. **BPE.** A byte-level BPE is trained on both sides of every pair. Reserved tokens come first.
+1. **BPE.** A byte-level BPE is trained on both sides of every pair, unless a
+   [pretrained tokenizer](#grouping-a-pretrained-tokenizer) is given. Reserved tokens come first.
 2. **Alignment.** Each pair goes through the aligner (its source's own, if it has one). A BPE subword gets the mean
    vector of the aligner's word pieces that overlap it in characters. Two subwords are linked when each one's softmax
    over the other side's similarities exceeds `threshold` (awesome-align's rule).
@@ -217,7 +243,8 @@ grouptok train --config sources.json --out my-tokenizer --vocab-size 49152 --ali
    - if one is, the other joins its group unless the group already has `max_group_size` members;
    - two existing groups are never merged.
 
-   *Every remaining token, including the reserved tokens, is a group of its own.*
+   *Every remaining token, including the reserved tokens and the byte fragments (tokens that are only part of a UTF-8
+   character), is a group of its own.*
 
 ## Files
 
@@ -228,8 +255,12 @@ grouptok train --config sources.json --out my-tokenizer --vocab-size 49152 --ali
 
 ```json
 {"max_group_size": 8, "token_group": [0, 1, 2, 3, ...], "token_member": [0, 0, 0, 0, ...],
+ "special_tokens": ["<|endoftext|>", "<|im_start|>", "<|im_end|>"], "additional_tokens": [],
  "groups": {"412": ["Ġhouse", "Ġmaison", "ĠHaus"], ...}}
 ```
+
+A pretrained tokenizer, or one loaded with `from_pretrained`, gets its tokenizer files copied as they are instead of
+the first two.
 
 `groups` is only there for people reading the file. It lists the groups with several members as raw BPE tokens, where
 `Ġ` marks a leading space. 

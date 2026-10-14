@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 import operator
 import os
+import shutil
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from functools import reduce
 from typing import Any
 
@@ -19,6 +21,8 @@ PathLike = str | os.PathLike
 Pair = tuple[str, str]
 
 DEFAULT_SPECIAL_TOKENS: tuple[str, str, str] = ('<|endoftext|>', '<|im_start|>', '<|im_end|>')  # pad, bos, eos -> ids 0, 1, 2
+# the files of a tokenizer folder that save_pretrained copies (transformers' names), leaving out model weights and the like
+TOKENIZER_FILES = ('*token*', 'vocab*', 'merges.txt', '*.model', 'chat_template*')
 
 
 @dataclass(frozen=True)
@@ -26,8 +30,9 @@ class TokenizerConfig:
     """Settings for training a grouped tokenizer.
 
     Attributes:
-        vocab_size: Size of the BPE vocabulary, reserved tokens included.
-        special_tokens: The `(pad, bos, eos)` tokens. They get ids 0, 1 and 2, and `decode(skip_special=True)` drops them.
+        vocab_size: Size of the BPE vocabulary, reserved tokens included; ignored when `train` gets a pretrained tokenizer.
+        special_tokens: The `(pad, bos, eos)` tokens. They get the first ids of a trained BPE (0, 1 and 2), and
+            `decode(skip_special=True)` drops them. They may repeat, e.g. `("<|endoftext|>",) * 3` for GPT-2's tokenizer.
         additional_tokens: More reserved tokens after the special ones (e.g. `'<think>'`). They are never grouped and
             are kept when decoding.
         chat_template: Jinja chat template saved to `tokenizer_config.json` for transformers' `apply_chat_template`.
@@ -36,8 +41,8 @@ class TokenizerConfig:
         aligner: The neural aligner and how links are extracted.
 
     Raises:
-        ValueError: If `special_tokens` is not three tokens, or a token appears twice among the special and additional
-            tokens.
+        ValueError: If `special_tokens` is not three tokens, or an additional token appears twice or is also a special
+            token.
 
     Examples:
         >>> from grouptok import GroupingConfig, TokenizerConfig
@@ -63,9 +68,8 @@ class TokenizerConfig:
         object.__setattr__(self, 'additional_tokens', tuple(self.additional_tokens))
         if len(self.special_tokens) != 3:
             raise ValueError('special_tokens must be (pad, bos, eos)')
-        reserved = self.special_tokens + self.additional_tokens
-        if len(set(reserved)) != len(reserved):
-            raise ValueError('special and additional tokens must be distinct')
+        if len(set(self.additional_tokens)) != len(self.additional_tokens) or set(self.additional_tokens) & set(self.special_tokens):
+            raise ValueError('additional tokens must be distinct and not special tokens')
 
 
 def train_bpe(texts: Iterable[str], vocab_size: int, reserved_tokens: Sequence[str] = DEFAULT_SPECIAL_TOKENS, *,
@@ -94,6 +98,7 @@ class GroupedTokenizer:
         additional_tokens: More reserved tokens, kept when decoding.
         chat_template: Jinja chat template for transformers, or `None`.
         model_max_length: Maximum sequence length recorded for transformers.
+        source: The folder whose tokenizer files `save_pretrained` copies as they are, or `None` to write them.
 
     Examples:
         >>> from grouptok import GroupedTokenizer
@@ -105,7 +110,8 @@ class GroupedTokenizer:
     """
 
     def __init__(self, tokenizer: Tokenizer, grouping: Grouping, *, special_tokens: Sequence[str] = DEFAULT_SPECIAL_TOKENS,
-                 additional_tokens: Sequence[str] = (), chat_template: str | None = None, model_max_length: int = 131072) -> None:
+                 additional_tokens: Sequence[str] = (), chat_template: str | None = None, model_max_length: int = 131072,
+                 source: PathLike | None = None) -> None:
         """Combine a trained BPE tokenizer with a grouping of its vocabulary.
 
         Most code gets a tokenizer from `train` or `from_pretrained` instead.
@@ -117,6 +123,8 @@ class GroupedTokenizer:
             additional_tokens: More reserved tokens; all must be in the vocabulary.
             chat_template: Jinja chat template for transformers, or `None`.
             model_max_length: Maximum sequence length recorded for transformers.
+            source: A folder holding the tokenizer's files (`tokenizer.json`, ...). `save_pretrained` copies them as
+                they are instead of writing `tokenizer.json` and `tokenizer_config.json`.
 
         Raises:
             ValueError: If the grouping covers a different number of tokens than the tokenizer has, or a special or
@@ -140,6 +148,7 @@ class GroupedTokenizer:
         self.additional_tokens = tuple(additional_tokens)
         self.chat_template = chat_template
         self.model_max_length = model_max_length
+        self.source = source
         missing = [t for t in self.special_tokens + self.additional_tokens if tokenizer.token_to_id(t) is None]
         if missing:
             raise ValueError(f'tokens missing from the vocabulary: {missing}')
@@ -147,7 +156,7 @@ class GroupedTokenizer:
     # ---- training
     @classmethod
     def train(cls, pairs: Iterable[Pair | Source], config: TokenizerConfig = TokenizerConfig(), *,
-              aligner: Aligner | None = None, progress: bool = True) -> GroupedTokenizer:
+              tokenizer: PathLike | None = None, aligner: Aligner | None = None, progress: bool = True) -> GroupedTokenizer:
         """Train a grouped tokenizer on sentence pairs.
 
         Trains a BPE on both sides of the pairs, aligns the subwords of each pair, then groups subwords that are often
@@ -155,12 +164,15 @@ class GroupedTokenizer:
         group can gather words of all of them. Training needs `pip install "grouptok[train]"`.
 
         Sources are read first. Pairs are aligned in one pass per aligner, and the link counts of all passes are pooled
-        before grouping.
+        before grouping. Tokens that are only part of a UTF-8 character (they decode to `�`) are never grouped.
 
         Args:
             pairs: `(text, translation)` pairs and/or `Source`s to read them from. Pairs with an empty side are skipped.
                 The first side of each pair supplies member 0 of the groups it creates.
             config: Vocabulary size, reserved tokens, grouping and aligner settings.
+            tokenizer: A local folder with a pretrained tokenizer's files, `tokenizer.json` among them, to group instead
+                of training a BPE. Its vocabulary and ids are kept and `save_pretrained` copies its files as they are;
+                `config.vocab_size` is ignored, and the special and additional tokens must already be in its vocabulary.
             aligner: A custom aligner for the pairs and the sources without their own; defaults to
                 `HFAligner(config.aligner)`.
             progress: Print progress while training.
@@ -169,7 +181,8 @@ class GroupedTokenizer:
             The trained tokenizer.
 
         Raises:
-            ValueError: If no pair has text on both sides, or a source has no rows.
+            ValueError: If no pair has text on both sides, a source has no rows, or a special or additional token is
+                missing from `tokenizer`.
 
         Examples:
             >>> from grouptok import GroupedTokenizer, TokenizerConfig
@@ -190,7 +203,19 @@ class GroupedTokenizer:
             Or mix pairs and sources:
 
             >>> tok = GroupedTokenizer.train(pairs + [Source("en-de.jsonl", columns=("en", "de"))])
+
+            Or group a pretrained tokenizer's vocabulary, from the Hugging Face Hub or any local folder:
+
+            >>> from huggingface_hub import snapshot_download
+            >>> qwen = snapshot_download("Qwen/Qwen2.5-0.5B", allow_patterns=["*token*"])   # the tokenizer files only
+            >>> tok = GroupedTokenizer.train(pairs, tokenizer=qwen)
+            >>> gpt2 = snapshot_download("openai-community/gpt2", allow_patterns=["*token*"])
+            >>> tok = GroupedTokenizer.train(pairs, TokenizerConfig(special_tokens=("<|endoftext|>",) * 3), tokenizer=gpt2)
         """
+        reserved = config.special_tokens + config.additional_tokens
+        bpe = None if tokenizer is None else Tokenizer.from_file(os.path.join(tokenizer, 'tokenizer.json'))
+        if bpe is not None and (missing := [t for t in reserved if bpe.token_to_id(t) is None]):
+            raise ValueError(f'tokens missing from the vocabulary: {missing}')   # before reading sources and aligning
         items = list(pairs)
         plain = [(a, b) for a, b in (p for p in items if not isinstance(p, Source)) if a and b]
         by_aligner: dict[AlignerConfig | None, list[Pair]] = {None: plain} if plain else {}   # None: the default aligner
@@ -201,15 +226,16 @@ class GroupedTokenizer:
             by_aligner.setdefault(source.aligner, []).extend(rows)
         if not by_aligner:
             raise ValueError('no sentence pairs with text on both sides')
-        reserved = config.special_tokens + config.additional_tokens
-        bpe = train_bpe((text for rows in by_aligner.values() for pair in rows for text in pair), config.vocab_size, reserved,
-                        progress=progress)
+        if bpe is None:
+            bpe = train_bpe((text for rows in by_aligner.values() for pair in rows for text in pair), config.vocab_size, reserved,
+                            progress=progress)
         passes = (align_pairs(rows, bpe, source_aligner or config.aligner, aligner=None if source_aligner else aligner,
                               progress=progress) for source_aligner, rows in by_aligner.items())   # one encoder loaded at a time
         links = reduce(operator.add, passes)
-        grouping = build_groups(links, config.grouping, reserved=[bpe.token_to_id(t) for t in reserved])
+        fragments = [t for t, text in enumerate(bpe.decode_batch([[t] for t in range(bpe.get_vocab_size())])) if '�' in text]
+        grouping = build_groups(links, config.grouping, reserved=[bpe.token_to_id(t) for t in reserved] + fragments)
         tok = cls(bpe, grouping, special_tokens=config.special_tokens, additional_tokens=config.additional_tokens,
-                  chat_template=config.chat_template, model_max_length=config.model_max_length)
+                  chat_template=config.chat_template, model_max_length=config.model_max_length, source=tokenizer)
         if progress:
             print(f'{grouping.num_groups} groups for {grouping.vocab_size} tokens; group sizes: {grouping.group_sizes()}')
         return tok
@@ -219,14 +245,17 @@ class GroupedTokenizer:
     def from_pretrained(cls, path: PathLike) -> GroupedTokenizer:
         """Load a tokenizer saved by `save_pretrained`.
 
+        `save_pretrained` on the loaded tokenizer copies the directory's tokenizer files as they are.
+
         Args:
-            path: A local directory with `tokenizer.json`, `tokenizer_config.json` and `groups.json`.
+            path: A local directory with `tokenizer.json` and `groups.json`. Directories saved by older grouptok
+                versions also need `tokenizer_config.json`, where they keep the reserved tokens.
 
         Returns:
             The loaded tokenizer.
 
         Raises:
-            FileNotFoundError: If one of the three files is missing.
+            FileNotFoundError: If one of the files is missing.
             ValueError: If the files don't describe the same vocabulary.
 
         Examples:
@@ -238,13 +267,21 @@ class GroupedTokenizer:
             >>> tok = GroupedTokenizer.from_pretrained(snapshot_download("your-name/my-tokenizer"))
         """
         tokenizer =Tokenizer.from_file(os.path.join(path, 'tokenizer.json'))
-        with open(os.path.join(path, 'tokenizer_config.json'), encoding='utf-8') as f:
-            config = json.load(f)
-        special = (config['pad_token'], config['bos_token'], config['eos_token'])
-        added = sorted(config.get('added_tokens_decoder', {}).items(), key=lambda item: int(item[0]))
-        additional = [info['content'] for _, info in added if info['content'] not in special]
+        config_path = os.path.join(path, 'tokenizer_config.json')
+        config: dict[str, Any] = {}
+        if os.path.exists(config_path):   # a pretrained tokenizer's folder may have none
+            with open(config_path, encoding='utf-8') as f:
+                config = json.load(f)
+        with open(os.path.join(path, 'groups.json'), encoding='utf-8') as f:
+            groups = json.load(f)
+        if 'special_tokens' in groups:   # a pretrained tokenizer's config doesn't name grouptok's pad / bos / eos
+            special, additional = groups['special_tokens'], groups['additional_tokens']
+        else:   # saved before groups.json listed the reserved tokens
+            special = (config['pad_token'], config['bos_token'], config['eos_token'])
+            added = sorted(config.get('added_tokens_decoder', {}).items(), key=lambda item: int(item[0]))
+            additional = [info['content'] for _, info in added if info['content'] not in special]
         return cls(tokenizer, Grouping.load(os.path.join(path, 'groups.json')), special_tokens=special, additional_tokens=additional,
-                   chat_template=config.get('chat_template'), model_max_length=config.get('model_max_length', 131072))
+                   chat_template=config.get('chat_template'), model_max_length=config.get('model_max_length', 131072), source=path)
 
     def _tokenizer_data(self) -> dict[str, Any]:
         """tokenizer.json content, with only pad / bos / eos flagged special (additional tokens stay visible when decoding)"""
@@ -256,8 +293,10 @@ class GroupedTokenizer:
     def save_pretrained(self, path: PathLike) -> None:
         """Save the tokenizer to a directory.
 
-        Writes `tokenizer.json` (a standard `tokenizers` file), `tokenizer_config.json` (so transformers'
-        `AutoTokenizer.from_pretrained` can load the directory) and `groups.json` (the grouping).
+        Writes `groups.json` (the grouping and the reserved tokens). A tokenizer that came from a folder (a pretrained
+        one, or one loaded by `from_pretrained`) gets that folder's tokenizer files copied as they are; a tokenizer
+        trained by grouptok gets `tokenizer.json` (a standard `tokenizers` file) and `tokenizer_config.json` (so
+        transformers' `AutoTokenizer.from_pretrained` can load the directory).
 
         Args:
             path: The directory, created if it doesn't exist.
@@ -273,11 +312,18 @@ class GroupedTokenizer:
             True
         """
         os.makedirs(path, exist_ok=True)
-        with open(os.path.join(path, 'tokenizer.json'), 'w', encoding='utf-8') as f:
-            json.dump(self._tokenizer_data(), f, ensure_ascii=False, indent=2)
-        with open(os.path.join(path, 'tokenizer_config.json'), 'w', encoding='utf-8') as f:
-            json.dump(self._hf_config(), f, ensure_ascii=False, indent=4)
-        self.grouping.save(os.path.join(path, 'groups.json'), tokens=[self.tokenizer.id_to_token(t) for t in range(self.vocab_size)])
+        if self.source is None:
+            with open(os.path.join(path, 'tokenizer.json'), 'w', encoding='utf-8') as f:
+                json.dump(self._tokenizer_data(), f, ensure_ascii=False, indent=2)
+            with open(os.path.join(path, 'tokenizer_config.json'), 'w', encoding='utf-8') as f:
+                json.dump(self._hf_config(), f, ensure_ascii=False, indent=4)
+        elif not os.path.samefile(self.source, path):
+            for name in os.listdir(self.source):
+                file = os.path.join(self.source, name)
+                if os.path.isfile(file) and any(fnmatch(name, pattern) for pattern in TOKENIZER_FILES):
+                    shutil.copy(file, path)
+        self.grouping.save(os.path.join(path, 'groups.json'), tokens=[self.tokenizer.id_to_token(t) for t in range(self.vocab_size)],
+                           special_tokens=list(self.special_tokens), additional_tokens=list(self.additional_tokens))
 
     def _hf_config(self) -> dict[str, Any]:
         pad, bos, eos = self.special_tokens
