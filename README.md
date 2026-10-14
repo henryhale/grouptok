@@ -41,7 +41,8 @@ Training needs the `train` extra. It runs on a GPU when one is available.
 from grouptok import GroupedTokenizer, TokenizerConfig
 
 pairs = [("The king said unto the people", "Le roi dit au peuple"), ...]   # (one language, the other)
-tok = GroupedTokenizer.train(pairs, TokenizerConfig(vocab_size=8192))
+special = ("<|endoftext|>", "<|im_start|>", "<|im_end|>")   # pad, bos, eos; none unless you set them
+tok = GroupedTokenizer.train(pairs, TokenizerConfig(vocab_size=8192, special_tokens=special))
 tok.save_pretrained("my-tokenizer")      # tokenizer.json, tokenizer_config.json, groups.json
 ```
 
@@ -171,10 +172,6 @@ gpt2 = snapshot_download("openai-community/gpt2", allow_patterns=["*token*"])
 tok = GroupedTokenizer.train(sources, TokenizerConfig(special_tokens=("<|endoftext|>",) * 3), tokenizer=gpt2)
 ```
 
-- `special_tokens` and `additional_tokens` must already be in the vocabulary (Qwen2.5's are grouptok's defaults); they
-  may repeat, as GPT-2 uses one token for pad, bos and eos. `vocab_size` is ignored.
-- `save_pretrained` copies the folder's tokenizer files (`tokenizer.json`, `tokenizer_config.json`, `vocab.json`, ...)
-  unchanged, and leaves out anything else, like model weights.
 - Groups can only link tokens that exist. A vocabulary with few whole-word tokens in a language gives that language few
   groups: multilingual vocabularies (Qwen2.5, Llama 3, Gemma) suit better than English-centric ones like GPT-2's.
 
@@ -185,7 +182,7 @@ from grouptok import AlignerConfig, GroupingConfig, TokenizerConfig
 
 TokenizerConfig(
     vocab_size=8192,
-    special_tokens=("<|endoftext|>", "<|im_start|>", "<|im_end|>"),   # pad, bos, eos -> ids 0, 1, 2
+    special_tokens=("<|endoftext|>", "<|im_start|>", "<|im_end|>"),   # pad, bos, eos -> ids 0, 1, 2; none by default
     additional_tokens=("<think>", "</think>"),                        # more reserved tokens, never grouped
     chat_template=None,                                               # Jinja template saved to tokenizer_config.json
     grouping=GroupingConfig(max_group_size=8, min_link_count=5, min_dice=0.1),

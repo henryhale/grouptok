@@ -107,6 +107,22 @@ def test_pretrained_tokenizer(trained, pairs, tmp_path):
         GroupedTokenizer.train(pairs, TokenizerConfig(special_tokens=('<pad>', '<s>', '</s>')), tokenizer=source, aligner=object())
 
 
+def test_no_special_tokens(trained, tmp_path):
+    """Special tokens are opt-in: without them there is no pad / bos / eos to add, and saving and loading keep none"""
+    assert TokenizerConfig().special_tokens == ()
+    with pytest.raises(ValueError):
+        TokenizerConfig(special_tokens=('<pad>', '<s>'))
+    tok = GroupedTokenizer(trained.tokenizer, trained.grouping)
+    assert (tok.pad_id, tok.bos_id, tok.eos_id) == (None, None, None)
+    assert tok.decode(tok.encode('The king')) == 'The king'
+    with pytest.raises(ValueError):
+        tok.encode('The king', eos=True)
+    with pytest.raises(ValueError):
+        tok.encode_batch(['The king'], bos=True)
+    tok.save_pretrained(tmp_path)
+    assert GroupedTokenizer.from_pretrained(tmp_path).special_tokens == ()
+
+
 def test_training_needs_pairs():
     with pytest.raises(ValueError):
         GroupedTokenizer.train([('', 'vide'), ('empty', '')])
