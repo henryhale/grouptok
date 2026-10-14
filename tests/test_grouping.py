@@ -43,10 +43,9 @@ def test_from_groups_rejects_duplicates():
 
 def test_save_and_load(tmp_path):
     g = Grouping.from_groups([[0], [1, 2]], max_group_size=8)
-    g.save(tmp_path, tokens=['<pad>', 'Ġpark', 'Ġparc'])
+    g.save(tmp_path, special_tokens=['<pad>'])
     data = json.loads((tmp_path / 'groups.json').read_text())
-    assert list(data) == ['max_group_size', 'token_group', 'token_member', 'groups']
-    assert data['groups'] == {'1': ['Ġpark', 'Ġparc']}
+    assert list(data) == ['max_group_size', 'token_group', 'token_member', 'special_tokens']
     assert Grouping.load(tmp_path) == g
     data['merge_members'] = True  # keys added by other tools are ignored
     (tmp_path / 'groups.json').write_text(json.dumps(data))

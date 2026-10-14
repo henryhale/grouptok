@@ -159,26 +159,22 @@ class Grouping:
             data = json.load(f)
         return cls(tuple(data['token_group']), tuple(data['token_member']), int(data['max_group_size']))
 
-    def save(self, path: PathLike, tokens: Sequence[str] | None = None, **extra: Any) -> None:
+    def save(self, path: PathLike, **extra: Any) -> None:
         """Write the grouping to `groups.json`.
 
         Args:
             path: The file, or an existing directory to write `groups.json` into.
-            tokens: The vocabulary's tokens, indexed by id. If given, the file also gets a `groups` map of every group
-                with several members, for people reading it.
             **extra: More keys to write (`GroupedTokenizer` adds its reserved tokens); `load` ignores them.
 
         Examples:
             >>> g = Grouping.from_groups([[0], [3, 1], [2]])
-            >>> g.save("groups.json", tokens=["<pad>", "Ġparc", "Ġthe", "Ġpark"])
+            >>> g.save("groups.json")
             >>> Grouping.load("groups.json") == g
             True
         """
         path = os.path.join(path, 'groups.json') if os.path.isdir(path) else path
         data: dict[str, Any] = {'max_group_size': self.max_group_size, 'token_group': list(self.token_group),
                                 'token_member': list(self.token_member), **extra}
-        if tokens is not None:
-            data['groups'] = {g: [tokens[t] for t in members] for g, members in enumerate(self.groups()) if len(members) > 1}
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
 
